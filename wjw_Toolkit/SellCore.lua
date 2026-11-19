@@ -626,7 +626,16 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1)
             NS.VERSION, db.enabled and "开启" or "关闭"))
     elseif event == "MERCHANT_SHOW" then
         if db and db.enabled then
+            -- 事件触发瞬间 MerchantFrame 可能尚未标记为显示：
+            -- 立即尝试一次，再延迟 0.2 秒补一次（StartSession 自身有 session.active 保护，重复调用无害）
             StartSession()
+            if C_Timer and type(C_Timer.After) == "function" then
+                C_Timer.After(0.2, function()
+                    if db and db.enabled then
+                        StartSession()
+                    end
+                end)
+            end
         end
     elseif event == "MERCHANT_CLOSED" then
         if session.active then
