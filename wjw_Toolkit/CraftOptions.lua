@@ -122,6 +122,18 @@ local function GetAutoSelect()
     return auto
 end
 
+-- 行内高亮接口（CraftHighlight.lua）存在且导出齐全时才可用
+local function GetHighlight()
+    local highlight = Craft.Highlight
+    if type(highlight) ~= "table" then
+        return nil
+    end
+    if type(highlight.SetEnabled) ~= "function" or type(highlight.IsEnabled) ~= "function" then
+        return nil
+    end
+    return highlight
+end
+
 ---------------------------------------------------------------- 面板刷新
 local function RefreshProfessions()
     if not panel or not panel.profText then return end
@@ -215,6 +227,17 @@ local function RefreshAutoSelect()
     panel.autoSelectCheck:SetChecked(ok and enabled and true or false)
 end
 
+local function RefreshHighlight()
+    if not panel or not panel.highlightCheck then return end
+    local highlight = GetHighlight()
+    if not highlight then
+        panel.highlightCheck:SetChecked(false)
+        return
+    end
+    local ok, enabled = pcall(highlight.IsEnabled)
+    panel.highlightCheck:SetChecked(ok and enabled and true or false)
+end
+
 -- 面板显示时刷新全部动态内容
 local function Refresh()
     RefreshProfessions()
@@ -222,6 +245,7 @@ local function Refresh()
     RefreshList("materials")
     RefreshList("recipes")
     RefreshAutoSelect()
+    RefreshHighlight()
 end
 
 ---------------------------------------------------------------- 名单操作
@@ -407,6 +431,22 @@ local function OnAutoSelectClick(checkButton)
     Say("自动选中推荐配方已" .. (enabled and "开启" or "关闭") .. "。")
 end
 
+local function OnHighlightClick(checkButton)
+    local highlight = GetHighlight()
+    if not highlight then
+        return
+    end
+
+    local enabled = checkButton:GetChecked() and true or false
+    local ok = pcall(highlight.SetEnabled, enabled)
+    if not ok then
+        checkButton:SetChecked(not enabled)
+        Say("切换「配方行内高亮」开关失败。")
+        return
+    end
+    Say("配方行内高亮已" .. (enabled and "开启" or "关闭") .. "。")
+end
+
 ---------------------------------------------------------------- 界面构建
 local function CreateDivider(parent, y)
     local line = parent:CreateTexture(nil, "ARTWORK")
@@ -582,15 +622,32 @@ local function BuildPanel()
         panel.autoSelectCheck:Disable()
     end
 
-    CreateDivider(panel, -232)
+    -- 在配方列表中高亮推荐配方（实验性）
+    local highlight = GetHighlight()
+    panel.highlightCheck = CreateCheckButton(panel,
+        highlight and "在配方列表中高亮推荐配方（实验性，版本更新后可能需要修复）"
+            or "在配方列表中高亮推荐配方（不可用）",
+        16, -224,
+        OnHighlightClick)
+    if type(panel.highlightCheck.label.SetWidth) == "function" then
+        panel.highlightCheck.label:SetWidth(PANEL_W - 60)
+    end
+    if type(panel.highlightCheck.label.SetJustifyH) == "function" then
+        panel.highlightCheck.label:SetJustifyH("LEFT")
+    end
+    if not highlight then
+        panel.highlightCheck:Disable()
+    end
+
+    CreateDivider(panel, -256)
 
     -- 跳过名单
     local skipLabel = panel:CreateFontString(nil, "ARTWORK", "GameFontNormal")
-    skipLabel:SetPoint("TOPLEFT", panel, "TOPLEFT", 16, -242)
+    skipLabel:SetPoint("TOPLEFT", panel, "TOPLEFT", 16, -266)
     skipLabel:SetText("跳过名单（规划时排除的材料与配方）")
 
-    BuildListColumn("materials", 16, -270)
-    BuildListColumn("recipes", 318, -270)
+    BuildListColumn("materials", 16, -296)
+    BuildListColumn("recipes", 318, -296)
 
     -- 底部按钮
     local startButton = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")

@@ -27,7 +27,7 @@
 | 客户端 | `_forever_`，版本 `1.60.1.70938`，分支 `cn`（网易国服，**正式服 Retail**） |
 | Interface 号 | **16001**（游戏内 `/dump select(4, GetBuildInfo())` 实测） |
 | 插件安装目录 | `_forever_\Interface\AddOns\` |
-| 存档 | `_forever_\WTF\Account\<账号>\SavedVariables\` 下的 `QuestPath.lua` 与 `WuXianAutoSell.lua` |
+| 存档 | `_forever_\WTF\Account\<账号>\SavedVariables\` 下的 `QuestPath.lua`、`WuXianAutoSell.lua` 与 `wjwCraftDB.lua` |
 | 本机 Lua 工具链 | **未装** `lua`/`luacheck`（用户要求非必要不安装）；有 `node`/`npm`、`git` |
 
 ## 插件结构
@@ -41,7 +41,14 @@
 | `SellCore.lua` | 卖垃圾：商人事件、背包扫描、出售流程、`/wjw sell` 命令、存档 |
 | `SellOptions.lua` | 卖垃圾：设置面板（永不卖出名单） |
 | `Options.lua` | 寻路设置页（自动跟随 / 屏幕箭头 / 静默模式三个开关） |
-| `wjw_Toolkit.toc` | Interface 16001、SavedVariables: QuestPathDB, WuXianAutoSellDB、加载顺序 |
+| `CraftTrainerData.lua` | 专业技能：训练师坐标数据（来源 QuestieDB） |
+| `CraftCore.lua` | 专业技能：专业与配方数据读取、升级路径算法、输出格式化 |
+| `CraftCommand.lua` | 专业技能：`/wjw craft` 命令与聊天输出、存档初始化 |
+| `CraftAutoSelect.lua` | 专业技能：打开专业窗口时自动选中推荐配方 |
+| `CraftOptions.lua` | 专业技能：设置页（专业与等级、目标等级、跳过名单、开关） |
+| `CraftPanel.lua` | 专业技能：制作队列浮动面板 |
+| `CraftHighlight.lua` | 专业技能：配方列表行内推荐高亮（实验性） |
+| `wjw_Toolkit.toc` | Interface 16001、SavedVariables: QuestPathDB, WuXianAutoSellDB, wjwCraftDB、加载顺序 |
 
 ## 命令
 
@@ -74,6 +81,21 @@
 | `/wjw sell config` | 打开设置面板 |
 | `/wjw sell help` | 显示卖垃圾帮助 |
 
+专业技能（`/wjw craft ...`）：
+
+| 命令 | 说明 |
+|---|---|
+| `/wjw craft` | 规划当前打开（或上次使用）的专业，到现有配方断点为止 |
+| `/wjw craft <目标等级>` | 规划到指定等级 |
+| `/wjw craft <专业名> [目标等级]` | 指定专业（和目标）后规划 |
+| `/wjw craft skip <材料名>` | 把材料加入跳过名单（规划时排除） |
+| `/wjw craft skiprecipe <配方名>` | 把配方加入跳过名单 |
+| `/wjw craft unskip <名称>` | 从两个跳过名单中移除 |
+| `/wjw craft list` | 查看两个跳过名单 |
+| `/wjw craft reset` | 清空跳过名单与目标等级 |
+| `/wjw craft trainer [类型]` | 查询训练师位置（同地图显示距离与方向） |
+| `/wjw craft help` | 显示专业技能帮助 |
+
 总帮助：
 
 | 命令 | 说明 |
@@ -82,7 +104,7 @@
 
 ## 设置页
 
-游戏「选项 → 插件」下有两个分类：`wjw_工具箱 · 任务寻路`、`wjw_工具箱 · 自动卖垃圾`。
+游戏「选项 → 插件」下有三个分类：`wjw_工具箱 · 任务寻路`、`wjw_工具箱 · 自动卖垃圾`、`wjw_工具箱 · 专业技能`。
 
 ## 关键技术事实（已核实，勿再重复验证）
 
@@ -105,6 +127,16 @@
 - `Settings.OpenToCategory` 只接受数字分类 ID；不要手工覆盖 Settings 分类对象的 ID 字段。
 - 背包容器索引 0–4 是背包与已装备背包，索引 5 是材料包（当前不扫描）。
 
+专业技能部分：
+
+- `C_TradeSkillUI.GetAllRecipeIDs` 返回当前专业**全部**配方（含未学），前提是该专业窗口打开过一次。
+- `C_TradeSkillUI.GetRecipeInfo` 提供 `canSkillUp / numSkillUps / maxTrivialLevel / relativeDifficulty`，但没有橙/黄/绿分界。
+- `C_TradeSkillUI.GetRecipeSchematic(recipeID, false)` 的 `reagentSlotSchematics[].reagents` 是每个槽位的**备选**材料列表，插件按每槽第一项估算。
+- `C_AreaPoiInfo.GetAreaPOIForMap` 在本客户端实测返回空表（训练师位置无法从游戏 API 获取），训练师坐标来自 QuestieDB 内置数据。
+- 官方没有训练师列表/位置 API；`C_Trainer` 只有 3 个界面函数。
+- `C_TradeSkillUI.OpenRecipe(recipeID)` 可打开并选中配方。
+- 专业界面为 `Blizzard_Professions`，主框架 `ProfessionsFrame`，配方行由 ScrollBox 池化复用，行绑定入口是 `ProfessionsRecipeListRecipeMixin.Init`（行内高亮依赖此内部结构，有版本风险）。
+
 ## 已知限制
 
 - 寻路连线是直线，不是寻路；只有游戏给出路点时才会分段指向。
@@ -113,6 +145,10 @@
 - 官方黄箭头显示同一任务时，自动隐藏小地图连线（屏幕箭头保留）。
 - 自动卖垃圾只处理品质 0 物品，永不卖出名单内的物品会被跳过；商人不收购或被锁定的物品会跳过并提示。
 - 自动卖垃圾的“获得金币”按会话前后钱数差值计算，期间修理/手动买卖会影响该数字。
+- 专业技能涨点概率与难度分界为社区经验估算（橙 100% / 黄 60% / 绿 25%），非官方数据。
+- 专业技能只规划**已学**配方；到现有配方断点为止，后续需找训练师学习新配方。
+- 训练师数据（QuestieDB）不含珠宝加工、铭文、考古学。
+- 配方行内高亮为实验性功能，依赖暴雪界面内部结构，游戏大版本更新后可能失效，可在设置页关闭。
 
 ## 开发约定
 
