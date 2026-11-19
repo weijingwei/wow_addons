@@ -43,15 +43,26 @@ if type(Craft) ~= "table" then
 end
 
 ---------------------------------------------------------------- 常量
-local MARKER_SIZE        = 16      -- 金色标记边长（像素）
-local MARKER_BORDER_SIZE = 18      -- 深色描边边长（托底，避免金色压在亮地图上看不清）
+local MARKER_SIZE        = 10      -- 回退样式：内层金色圆点边长（像素）
+local MARKER_BORDER_SIZE = 14      -- 回退样式：外层深色描边边长（托底，避免金色压在亮地图上看不清）
+local ATLAS_MARKER_SIZE  = 18      -- 图标图集样式的边长
 local MINIMAP_MARGIN     = 8       -- 贴边时标记中心距小地图边缘的余量
 local TICKER_SECONDS     = 2       -- 小地图/世界地图定时刷新间隔
+local WORLD_RETRY_SECONDS = 0.5    -- 世界地图画布未就绪时的重试间隔
+local WORLD_RETRY_LIMIT   = 3      -- 世界地图连续重试上限，超过仍失败才隐藏
 
 local MARKER_R, MARKER_G, MARKER_B = 1.0, 0.82, 0.20
 local MARKER_ALPHA = 1.0
 local BORDER_R, BORDER_G, BORDER_B = 0.10, 0.08, 0.02
 local BORDER_ALPHA = 0.85
+
+-- 标记优先使用的图标图集（按顺序尝试，全部取不到才退回纯色圆点）
+local MARKER_ATLASES = {
+    "VignetteKill",
+    "POI-icon",
+    "Waypoint-MapPin-Minimap",
+    "poi-camp",
+}
 
 ---------------------------------------------------------------- 存档与开关
 local function GetDB()
@@ -59,6 +70,23 @@ local function GetDB()
         return wjwCraftDB
     end
     return nil
+end
+
+-- 调试开关：wjwCraftDB.debug 为 true 时才输出诊断信息，其余情况完全不打印
+local function IsDebug()
+    local db = GetDB()
+    return db ~= nil and db.debug == true
+end
+
+local function DebugPrint(message)
+    if not IsDebug() then
+        return
+    end
+    if type(Craft.Print) == "function" then
+        pcall(Craft.Print, message)
+    elseif type(print) == "function" then
+        pcall(print, message)
+    end
 end
 
 -- 写开关时确保存档表存在（其余字段默认值由 CraftCommand.lua 负责补齐）
@@ -228,42 +256,106 @@ local function CreateMarkerTexture(parent)
     return texture
 end
 
-local function ConfigureMarkerTexture(texture, size, subLevel, red, green, blue, alpha)
+-- 图集是否存在：有 C_Texture.GetAtlasInfo 时以它为准，缺失时交给 SetAtlas 的 pcall 判断
+local function AtlasExists(atlasName)
+    if type(C_Texture) ~= "table" or type(C_Texture.GetAtlasInfo) ~= "function" then
+        return true
+    end
+    local ok, info = pcall(C_Texture.GetAtlasInfo, atlasName)
+    if not ok then
+        return false
+    end
+    return info ~= nil
+end
+
+-- 按 MARKER_ATLASES 的顺序尝试图标图集，任一成功返回 true
+local function ApplyMarkerAtlas(texture)
+    if type(texture.SetAtlas) ~= "function" then
+        return false
+    end
+    for index = 1, #MARKER_ATLASES do
+        local atlasName = MARKER_ATLASES[index]
+        if AtlasExists(atlasName) then
+            local ok = pcall(texture.SetAtlas, texture, atlasName)
+            if ok then
+                -- 图集名无效时 SetAtlas 可能静默无效，能回读就核对一遍
+                if type(texture.GetAtlas) ~= "function" then
+                    return true
+                end
+                local okGet, current = pcall(texture.GetAtlas, texture)
+                if okGet and current == atlasName then
+                    return true
+                end
+            end
+        end
+    end
+    return false
+end
+
+-- 纯色回退：先用 WHITE8X8 铺底再上色；SetColorTexture 缺失时退回顶点着色
+local function ApplySolidColor(texture, red, green, blue, alpha)
+    if type(texture.SetTexture) == "function" then
+        pcall(texture.SetTexture, texture, "Interface\\Buttons\\WHITE8X8")
+    end
+    if type(texture.SetColorTexture) == "function" then
+        pcall(texture.SetColorTexture, texture, red, green, blue, alpha)
+        return
+    end
+    pcall(texture.SetVertexColor, texture, red, green, blue, alpha)
+end
+
+-- 配置一个标记贴图：allowedAtlas 为 true 时优先用图标图集（尺寸 atlasSize），
+-- 取不到图集则退回纯色方块（尺寸 size）。第二个返回值表示是否真的用上了图集。
+local function ConfigureMarkerTexture(texture, size, subLevel, red, green, blue, alpha, allowedAtlas, atlasSize)
     if not texture then
         return false
     end
-    local ok = pcall(function()
-        texture:SetColorTexture(red, green, blue, alpha)
-        texture:SetSize(size, size)
+    local ok, usedAtlas = pcall(function()
+        local useAtlas = allowedAtlas == true and ApplyMarkerAtlas(texture)
+        if useAtlas then
+            local iconSize = atlasSize or size
+            texture:SetSize(iconSize, iconSize)
+        else
+            texture:SetSize(size, size)
+            ApplySolidColor(texture, red, green, blue, alpha)
+        end
         texture:SetDrawLayer("OVERLAY", subLevel)
         texture:Hide()
+        return useAtlas
     end)
-    return ok
+    if not ok then
+        return false
+    end
+    return true, usedAtlas == true
 end
 
 ---------------------------------------------------------------- 小地图标记
 local minimapBorder
 local minimapFill
+local minimapUsesAtlas
 
 local function EnsureMinimapMarkers()
     if minimapBorder and minimapFill then
-        return minimapBorder, minimapFill
+        return minimapBorder, minimapFill, minimapUsesAtlas
     end
     if not Minimap or type(Minimap.CreateTexture) ~= "function" then
         return nil
     end
     local border = CreateMarkerTexture(Minimap)
     local fill = CreateMarkerTexture(Minimap)
-    local configured = border and fill
+    local okBorder = border
         and ConfigureMarkerTexture(border, MARKER_BORDER_SIZE, 0, BORDER_R, BORDER_G, BORDER_B, BORDER_ALPHA)
-        and ConfigureMarkerTexture(fill, MARKER_SIZE, 1, MARKER_R, MARKER_G, MARKER_B, MARKER_ALPHA)
-    if not configured then
+    -- 图集可用时只画一枚 18×18 图标；否则退回 14×14 深色托底 + 10×10 金色圆点
+    local okFill, usedAtlas = fill
+        and ConfigureMarkerTexture(fill, MARKER_SIZE, 1, MARKER_R, MARKER_G, MARKER_B, MARKER_ALPHA,
+            true, ATLAS_MARKER_SIZE)
+    if not okBorder or not okFill then
         if border then pcall(border.Hide, border) end
         if fill then pcall(fill.Hide, fill) end
         return nil
     end
-    minimapBorder, minimapFill = border, fill
-    return minimapBorder, minimapFill
+    minimapBorder, minimapFill, minimapUsesAtlas = border, fill, usedAtlas == true
+    return minimapBorder, minimapFill, minimapUsesAtlas
 end
 
 local function HideMinimapMarkers()
@@ -277,7 +369,7 @@ end
 
 -- 距离/朝向 -> 小地图像素偏移。公式照 PathOverlay.lua:358–401（UpdateMinimap）
 local function UpdateMinimapMarker(nearest)
-    local border, fill = EnsureMinimapMarkers()
+    local border, fill, usedAtlas = EnsureMinimapMarkers()
     if not border or not fill then
         return
     end
@@ -343,11 +435,17 @@ local function UpdateMinimapMarker(nearest)
 
     local okPoint = pcall(function()
         border:ClearAllPoints()
-        border:SetPoint("CENTER", Minimap, "CENTER", offsetX, offsetY)
-        border:Show()
         fill:ClearAllPoints()
-        fill:SetPoint("CENTER", Minimap, "CENTER", offsetX, offsetY)
-        fill:Show()
+        if usedAtlas then
+            border:Hide()
+            fill:SetPoint("CENTER", Minimap, "CENTER", offsetX, offsetY)
+            fill:Show()
+        else
+            border:SetPoint("CENTER", Minimap, "CENTER", offsetX, offsetY)
+            border:Show()
+            fill:SetPoint("CENTER", Minimap, "CENTER", offsetX, offsetY)
+            fill:Show()
+        end
     end)
     if not okPoint then
         HideMinimapMarkers()
@@ -359,6 +457,10 @@ local worldFrame
 local worldBorder
 local worldFill
 local worldParent
+local worldUsesAtlas
+
+-- Refresh 定义在文件后半段；这里先声明，供画布未就绪时的延迟重试回调调用
+local Refresh
 
 local function HideWorldMarkers()
     if worldBorder then
@@ -374,7 +476,69 @@ local function DestroyWorldMarkers()
     if worldFrame then
         pcall(worldFrame.Hide, worldFrame)
     end
-    worldFrame, worldBorder, worldFill, worldParent = nil, nil, nil, nil
+    worldFrame, worldBorder, worldFill, worldParent, worldUsesAtlas = nil, nil, nil, nil, nil
+end
+
+local worldRetryCount = 0
+local worldRetrySeq = 0
+
+-- 让已排队但尚未执行的重试作废，并把重试计数清零
+local function ResetWorldRetry()
+    worldRetrySeq = worldRetrySeq + 1
+    worldRetryCount = 0
+end
+
+-- 画布/尺寸尚未就绪：延迟 0.5 秒重试，最多 WORLD_RETRY_LIMIT 次，超过才隐藏
+local function ScheduleWorldRetry(reason)
+    if worldRetryCount >= WORLD_RETRY_LIMIT then
+        DebugPrint(reason .. "（已重试 " .. WORLD_RETRY_LIMIT .. " 次仍不可用，隐藏标记）")
+        HideWorldMarkers()
+        ResetWorldRetry()
+        return
+    end
+    worldRetryCount = worldRetryCount + 1
+    worldRetrySeq = worldRetrySeq + 1
+    local sequence = worldRetrySeq
+    if worldRetryCount == 1 then
+        DebugPrint(reason .. "（" .. WORLD_RETRY_SECONDS .. " 秒后重试）")
+    end
+    if type(C_Timer) ~= "table" or type(C_Timer.After) ~= "function" then
+        HideWorldMarkers()
+        return
+    end
+    local ok = pcall(C_Timer.After, WORLD_RETRY_SECONDS, function()
+        -- 序列号变了说明期间已成功绘制或被重置，这次重试作废
+        if sequence ~= worldRetrySeq then
+            return
+        end
+        Refresh()
+    end)
+    if not ok then
+        HideWorldMarkers()
+    end
+end
+
+-- 当前显示的地图 ID：GetMapID() → frame.mapID → C_Map.GetBestMapForUnit("player")
+local function ResolveDisplayMapID()
+    local frame = WorldMapFrame
+    if frame and type(frame.GetMapID) == "function" then
+        local okMap, mapID = pcall(frame.GetMapID, frame)
+        if okMap and type(mapID) == "number" then
+            return mapID
+        end
+        DebugPrint("world: GetMapID 返回异常，改用回退取值")
+    end
+    if frame and type(frame.mapID) == "number" then
+        return frame.mapID
+    end
+    if type(C_Map) == "table" and type(C_Map.GetBestMapForUnit) == "function" then
+        local okBest, mapID = pcall(C_Map.GetBestMapForUnit, "player")
+        if okBest and type(mapID) == "number" then
+            return mapID
+        end
+    end
+    DebugPrint("world: no GetMapID")
+    return nil
 end
 
 -- 每次调用都核对绘制层父级：地图关闭再打开时游戏可能重建 canvas（同 PathOverlay.lua:479–499）
@@ -388,7 +552,7 @@ local function EnsureWorldMarkers()
         return nil
     end
     if worldFrame and worldParent == canvas then
-        return worldBorder, worldFill, canvas
+        return worldBorder, worldFill, canvas, worldUsesAtlas
     end
 
     DestroyWorldMarkers()
@@ -398,7 +562,9 @@ local function EnsureWorldMarkers()
     end
     local okSetup = pcall(function()
         newFrame:SetAllPoints(canvas)
-        newFrame:SetFrameLevel(canvas:GetFrameLevel() + 1)
+        -- 画布上还叠着 POI 图钉等子框体，只加 1 层可能被盖住；抬到 +100 确保标记在最上层
+        newFrame:SetFrameLevel(canvas:GetFrameLevel() + 100)
+        newFrame:Show()
     end)
     if not okSetup then
         pcall(newFrame.Hide, newFrame)
@@ -407,39 +573,62 @@ local function EnsureWorldMarkers()
 
     local border = CreateMarkerTexture(newFrame)
     local fill = CreateMarkerTexture(newFrame)
-    local configured = border and fill
+    local okBorder = border
         and ConfigureMarkerTexture(border, MARKER_BORDER_SIZE, 0, BORDER_R, BORDER_G, BORDER_B, BORDER_ALPHA)
-        and ConfigureMarkerTexture(fill, MARKER_SIZE, 1, MARKER_R, MARKER_G, MARKER_B, MARKER_ALPHA)
-    if not configured then
+    local okFill, usedAtlas = fill
+        and ConfigureMarkerTexture(fill, MARKER_SIZE, 1, MARKER_R, MARKER_G, MARKER_B, MARKER_ALPHA,
+            true, ATLAS_MARKER_SIZE)
+    if not okBorder or not okFill then
         pcall(newFrame.Hide, newFrame)
         return nil
     end
 
     worldFrame, worldParent = newFrame, canvas
     worldBorder, worldFill = border, fill
-    return worldBorder, worldFill, canvas
+    worldUsesAtlas = usedAtlas == true
+    return worldBorder, worldFill, canvas, worldUsesAtlas
+end
+
+-- debug 模式下的定位/层级快照：偏移、画布尺寸、框体层级与可见性
+local function DescribeWorldMarker(canvas, offsetX, offsetY, width, height)
+    local frameLevel, canvasLevel, frameShown, fillShown = "?", "?", "?", "?"
+    if worldFrame then
+        local okLevel, level = pcall(worldFrame.GetFrameLevel, worldFrame)
+        if okLevel then frameLevel = level end
+        local okFrameShown, value = pcall(worldFrame.IsShown, worldFrame)
+        if okFrameShown then frameShown = value end
+    end
+    if canvas then
+        local okLevel, level = pcall(canvas.GetFrameLevel, canvas)
+        if okLevel then canvasLevel = level end
+    end
+    if worldFill then
+        local okShown, value = pcall(worldFill.IsShown, worldFill)
+        if okShown then fillShown = value end
+    end
+    return string.format(
+        "world: x=%.1f y=%.1f canvas=%sx%s frameLevel=%s canvasLevel=%s frameShown=%s fillShown=%s",
+        offsetX, offsetY, tostring(width), tostring(height),
+        tostring(frameLevel), tostring(canvasLevel), tostring(frameShown), tostring(fillShown))
 end
 
 local function UpdateWorldMarker(nearest)
     local frame = WorldMapFrame
     if not frame or type(frame.IsShown) ~= "function" then
+        ResetWorldRetry()
         HideWorldMarkers()
         return
     end
     local okShown, shown = pcall(frame.IsShown, frame)
     if not okShown or not shown then
+        ResetWorldRetry()
         HideWorldMarkers()
         return
     end
 
-    local displayMapID
-    if type(frame.GetMapID) == "function" then
-        local okMap, mapID = pcall(frame.GetMapID, frame)
-        if okMap and type(mapID) == "number" then
-            displayMapID = mapID
-        end
-    end
+    local displayMapID = ResolveDisplayMapID()
     if not displayMapID then
+        ResetWorldRetry()
         HideWorldMarkers()
         return
     end
@@ -457,13 +646,15 @@ local function UpdateWorldMarker(nearest)
         end
     end
     if type(mapX) ~= "number" or type(mapY) ~= "number" then
+        DebugPrint("world: convert failed")
+        ResetWorldRetry()
         HideWorldMarkers()
         return
     end
 
-    local border, fill, canvas = EnsureWorldMarkers()
+    local border, fill, canvas, usedAtlas = EnsureWorldMarkers()
     if not border or not fill or not canvas then
-        HideWorldMarkers()
+        ScheduleWorldRetry("world: no canvas")
         return
     end
 
@@ -472,23 +663,38 @@ local function UpdateWorldMarker(nearest)
     end)
     if not okSize or type(width) ~= "number" or type(height) ~= "number"
         or width <= 1 or height <= 1 then
-        HideWorldMarkers()
+        -- 地图刚打开时画布可能还没布局完（w=0），延迟重试而不是立刻放弃
+        ScheduleWorldRetry(okSize and "world: canvas w=0" or "world: canvas size error")
         return
     end
 
+    ResetWorldRetry()
+
     -- PathOverlay.lua:536–537 以 BOTTOMLEFT 为原点写 x*W, (1-y)*H；
-    -- 这里改用 TOPLEFT 锚点 + 负 Y，两条公式画在同一像素位置
+    -- 这里改用 TOPLEFT 锚点 + 负 Y，两条公式画在同一像素位置。
+    -- 贴图挂在绘制层框体（与 canvas 同尺寸）的 TOPLEFT，避免跨框体锚定。
     local offsetX, offsetY = mapX * width, -mapY * height
     local okPoint = pcall(function()
         border:ClearAllPoints()
-        border:SetPoint("CENTER", canvas, "TOPLEFT", offsetX, offsetY)
-        border:Show()
         fill:ClearAllPoints()
-        fill:SetPoint("CENTER", canvas, "TOPLEFT", offsetX, offsetY)
-        fill:Show()
+        if usedAtlas then
+            border:Hide()
+            fill:SetPoint("CENTER", worldFrame, "TOPLEFT", offsetX, offsetY)
+            fill:Show()
+        else
+            border:SetPoint("CENTER", worldFrame, "TOPLEFT", offsetX, offsetY)
+            border:Show()
+            fill:SetPoint("CENTER", worldFrame, "TOPLEFT", offsetX, offsetY)
+            fill:Show()
+        end
     end)
     if not okPoint then
+        ResetWorldRetry()
         HideWorldMarkers()
+        return
+    end
+    if IsDebug() then
+        DebugPrint(DescribeWorldMarker(canvas, offsetX, offsetY, width, height))
     end
 end
 
@@ -515,7 +721,8 @@ local function RefreshInternal()
 end
 
 -- 任何未预料的失败（例如暴雪界面结构变化）只收起标记，不把错误抛给用户
-local function Refresh()
+-- 注意：Refresh 已在世界地图段先前置声明，这里赋值给同一个局部变量
+Refresh = function()
     local ok = pcall(RefreshInternal)
     if not ok then
         HideAllMarkers()
