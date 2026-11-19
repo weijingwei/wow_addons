@@ -53,7 +53,8 @@ local WORLD_MARKER_BORDER_SIZE = 16  -- 世界地图回退样式：外层深色�
 local WORLD_ATLAS_MARKER_SIZE  = 24  -- 世界地图图标图集样式的边长
 local WORLD_FAIL_LIMIT         = 3   -- 世界地图连续刷新失败上限，达到才隐藏标记
 local MINIMAP_MARGIN     = 8       -- 贴边时标记中心距小地图边缘的余量
-local TICKER_SECONDS     = 2       -- 小地图/世界地图定时刷新间隔
+local TICKER_SECONDS     = 2       -- 世界地图定时刷新间隔（小地图改用下方高频间隔）
+local MINIMAP_TICK_SECONDS = 0.1   -- 小地图标记跟随刷新间隔（与世界地图解耦）
 local WORLD_RETRY_SECONDS = 0.5    -- 世界地图画布未就绪时的重试间隔
 local WORLD_RETRY_LIMIT   = 3      -- 世界地图连续重试上限，超过仍失败才隐藏
 
@@ -343,6 +344,7 @@ end
 local minimapBorder
 local minimapFill
 local minimapUsesAtlas
+local minimapNearest     -- 最近一次 FindNearest() 的结果，供小地图高频刷新复用
 
 local function EnsureMinimapMarkers()
     if minimapBorder and minimapFill then
@@ -471,6 +473,17 @@ local function UpdateMinimapMarker(nearest)
     end
 end
 
+-- 高频刷新：训练师坐标不变，只需按玩家当前坐标重算屏幕位置；
+-- 只调 UpdateMinimapMarker，不触碰世界地图的重试与失败计数逻辑。
+local function RefreshMinimapPosition()
+    if not IsEnabled() then
+        return
+    end
+    if minimapNearest then
+        UpdateMinimapMarker(minimapNearest)
+    end
+end
+
 ---------------------------------------------------------------- 世界地图标记
 local worldBorder
 local worldFill
@@ -568,6 +581,11 @@ end
 -- 跨地图换算失败）时保留上一次成功绘制的位置；只有连续失败到上限、或当前显示的
 -- 地图已经不是上次绘制那张图时才隐藏。
 local function FailWorldDraw(reason, displayMapID)
+    -- 连续失败到上限时已隐藏标记并打印过日志：后续失败不再累计、不再重复打印，
+    -- 直到某次成功绘制或全量收起把计数清零。
+    if worldFailCount >= WORLD_FAIL_LIMIT then
+        return
+    end
     worldFailCount = worldFailCount + 1
     local keep = lastWorldDraw ~= nil
         and displayMapID ~= nil
@@ -777,6 +795,7 @@ end
 
 ---------------------------------------------------------------- 刷新
 local ticker
+local minimapTicker
 
 local function HideAllMarkers()
     HideMinimapMarkers()
@@ -785,6 +804,8 @@ local function HideAllMarkers()
     -- 避免下次刷新把标记画回到过期的位置
     worldFailCount = 0
     lastWorldDraw = nil
+    -- 小地图位置缓存同样作废，避免高频刷新把标记画回旧位置
+    minimapNearest = nil
 end
 
 local function RefreshInternal()
@@ -793,10 +814,12 @@ local function RefreshInternal()
         return
     end
     local nearest = FindNearest()
+    -- 供 0.1 秒高频刷新复用；读不到时置 nil，小地图标记随之收起
+    minimapNearest = nearest
     if not nearest then
         -- 偶发读不到（专业窗口切换、玩家坐标暂时不可得）时不立刻收掉世界地图标记：
         -- 同一张显示地图时保留上次成功绘制的位置，连续失败到上限才隐藏。
-        -- 小地图没有位置缓存，照旧立即收起。
+        -- 小地图缓存已在上方清空，立即收起即可。
         HideMinimapMarkers()
         FailWorldDraw("world: no nearest", ResolveDisplayMapID())
         return
@@ -815,23 +838,35 @@ Refresh = function()
 end
 
 local function StopTicker()
-    if not ticker then
-        return
+    if ticker then
+        pcall(ticker.Cancel, ticker)
+        ticker = nil
     end
-    pcall(ticker.Cancel, ticker)
-    ticker = nil
+    if minimapTicker then
+        pcall(minimapTicker.Cancel, minimapTicker)
+        minimapTicker = nil
+    end
 end
 
 local function StartTicker()
-    if ticker then
+    if ticker and minimapTicker then
         return
     end
     if type(C_Timer) ~= "table" or type(C_Timer.NewTicker) ~= "function" then
         return
     end
-    local ok, newTicker = pcall(C_Timer.NewTicker, TICKER_SECONDS, Refresh)
-    if ok then
-        ticker = newTicker
+    if not ticker then
+        local ok, newTicker = pcall(C_Timer.NewTicker, TICKER_SECONDS, Refresh)
+        if ok then
+            ticker = newTicker
+        end
+    end
+    if not minimapTicker then
+        local okMinimap, newMinimapTicker =
+            pcall(C_Timer.NewTicker, MINIMAP_TICK_SECONDS, RefreshMinimapPosition)
+        if okMinimap then
+            minimapTicker = newMinimapTicker
+        end
     end
 end
 

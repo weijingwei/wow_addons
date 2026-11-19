@@ -23,7 +23,7 @@ local ADDON_NAME, NS = ...
 
 NS.ADDON_NAME = ADDON_NAME
 NS.PREFIX     = "|cff33ff99[wjw_工具箱]|r "
-NS.VERSION    = "1.0.0"
+NS.VERSION    = "1.4.0"
 
 -- 指向 SavedVariables 表，仅在 ADDON_LOADED 之后有值
 local db
