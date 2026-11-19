@@ -467,6 +467,9 @@ EnsurePanel = function()
         return panel
     end
     panel = CreatePanel()
+    if panel then
+        panel:Hide()
+    end
     return panel
 end
 

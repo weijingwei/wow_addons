@@ -52,6 +52,51 @@ end
 ---------------------------------------------------------------- 专业列表
 -- 返回：{ { skillLineID, name, level, maxLevel, modifier, isPrimary }, ... }
 -- API 不存在或未学任何专业时返回空表
+-- 数据来源：
+--   * 主专业：GetAllProfessionTradeSkillLines 返回的 ID，经 GetProfessionInfoBySkillLineID
+--     读取详情；同一专业会出现新旧两个 ID（如工程学 2941 与 202、采矿 2946 与 186）。
+--   * 次要专业：上面的接口不返回烹饪/钓鱼/急救/考古，按固定 ID 逐个补充；读不到的
+--     跳过（不同版本 ID 可能不同，允许失败）。
+--   * 最后按 professionName 去重，同名只保留一条。
+Craft.SECONDARY_PROFESSION_IDS = { 185, 356, 129, 794 }
+
+-- 把 GetProfessionInfoBySkillLineID 的返回值转成结果条目；读不到 professionName 返回 nil
+local function BuildProfessionEntry(skillLineID, info)
+    if type(info) ~= "table" then
+        return nil
+    end
+    local name = info.professionName
+    if type(name) ~= "string" or name == "" then
+        return nil
+    end
+    return {
+        skillLineID = skillLineID,
+        name        = name,
+        level       = info.skillLevel,
+        maxLevel    = info.maxSkillLevel,
+        modifier    = info.skillModifier,
+        isPrimary   = info.isPrimaryProfession and true or false,
+    }
+end
+
+-- 同名专业的去重选优：① 当前打开的专业优先；② skillLevel 更大者；
+-- ③ skillLineID 更大者（新版本 ID 通常更大）；全部相同时保留先出现的那条。
+local function IsBetterProfessionEntry(candidate, current, selectedSkillLineID)
+    local candidateSelected = selectedSkillLineID ~= nil
+        and candidate.skillLineID == selectedSkillLineID
+    local currentSelected = selectedSkillLineID ~= nil
+        and current.skillLineID == selectedSkillLineID
+    if candidateSelected ~= currentSelected then
+        return candidateSelected
+    end
+    local candidateLevel = tonumber(candidate.level) or 0
+    local currentLevel = tonumber(current.level) or 0
+    if candidateLevel ~= currentLevel then
+        return candidateLevel > currentLevel
+    end
+    return (tonumber(candidate.skillLineID) or 0) > (tonumber(current.skillLineID) or 0)
+end
+
 function Craft.GetProfessions()
     local result = {}
     local UI = GetTradeSkillUI()
@@ -68,19 +113,48 @@ function Craft.GetProfessions()
         return result
     end
 
+    local function ReadProfession(skillLineID)
+        if type(skillLineID) ~= "number" then
+            return nil
+        end
+        local okInfo, info = pcall(UI.GetProfessionInfoBySkillLineID, skillLineID)
+        if not okInfo then
+            return nil
+        end
+        return BuildProfessionEntry(skillLineID, info)
+    end
+
+    local entries = {}
+    -- 主专业
     for _, skillLineID in ipairs(lines) do
-        if type(skillLineID) == "number" then
-            local okInfo, info = pcall(UI.GetProfessionInfoBySkillLineID, skillLineID)
-            if okInfo and type(info) == "table" then
-                result[#result + 1] = {
-                    skillLineID = skillLineID,
-                    name        = info.professionName,
-                    level       = info.skillLevel,
-                    maxLevel    = info.maxSkillLevel,
-                    modifier    = info.skillModifier,
-                    isPrimary   = info.isPrimaryProfession and true or false,
-                }
-            end
+        local entry = ReadProfession(skillLineID)
+        if entry then
+            entries[#entries + 1] = entry
+        end
+    end
+    -- 次要专业
+    for _, skillLineID in ipairs(Craft.SECONDARY_PROFESSION_IDS) do
+        local entry = ReadProfession(skillLineID)
+        if entry then
+            entries[#entries + 1] = entry
+        end
+    end
+
+    -- 按 professionName 去重：同名只保留一条，位置沿用首次出现处
+    local selectedSkillLineID
+    local frame = _G.ProfessionsFrame
+    if type(frame) == "table" and type(frame.selectedSkillLine) == "number" then
+        selectedSkillLineID = frame.selectedSkillLine
+    end
+
+    local indexByName = {}
+    for _, entry in ipairs(entries) do
+        local index = indexByName[entry.name]
+        if not index then
+            result[#result + 1] = entry
+            indexByName[entry.name] = #result
+        elseif IsBetterProfessionEntry(entry, result[index], selectedSkillLineID) then
+            result[index] = entry
         end
     end
 
@@ -157,8 +231,15 @@ local function GetSkillLineFromFrame()
 end
 
 -- 返回当前打开专业的 skillLineID；读不到返回 nil。
--- 顺序：① 专业界面数据；② C_TradeSkillUI.GetTradeSkillLine 的返回值。
+-- 顺序：① ProfessionsFrame.selectedSkillLine（本客户端实测字段，是数字，打开烹饪时为 185）；
+--       ② 专业界面 CraftingPage 上的候选字段（兜底，见 GetSkillLineFromFrame）；
+--       ③ C_TradeSkillUI.GetTradeSkillLine（保留，本客户端不存在）。
 function Craft.GetOpenProfession()
+    local frame = _G.ProfessionsFrame
+    if type(frame) == "table" and type(frame.selectedSkillLine) == "number" then
+        return frame.selectedSkillLine
+    end
+
     local fromFrame = GetSkillLineFromFrame()
     if fromFrame then
         return fromFrame
