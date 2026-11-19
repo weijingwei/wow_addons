@@ -11,12 +11,11 @@
       * 对外接口：Craft.TrainerMarker = { SetEnabled, IsEnabled, Refresh }。
       * 关闭后立即隐藏两处标记并停止定时器，事件回调也不会再显示。
 
-    专业名来源（按优先级）：
-      ① Craft.GetOpenProfession() 的 skillLineID -> 专业名（C_TradeSkillUI /
-         Craft.GetProfessions() 两条路）；
-      ② wjwCraftDB.lastProfession（CraftCommand.lua 写入的最后一次规划专业名）；
-      ③ Craft.GetProfessions() 的第一个已学专业。
-      拿不到专业名、或该专业在 Craft.Trainers 里没有数据时，隐藏标记。
+    训练师类型来源（统一在 CraftCore.lua 的 Craft.GetCurrentTrainerType 里判定）：
+      ① wjwCraftDB.trainerType（用户显式指定过、且内置数据里有该类型）；
+      ② 专业窗口可见时的专业（Craft.GetVisibleProfession；窗口关着不算）；
+      ③ wjwCraftDB.lastProfession（CraftCommand.lua 写入的最后一次规划专业名）。
+      都取不到、或该类型在 Craft.Trainers 里没有数据时，隐藏标记（不再猜测第一个已学专业）。
 
     坐标换算复用（不另造一套）：
       * 小地图：PathOverlay.lua 的 UpdateMinimap（343、358–401 行）——
@@ -114,61 +113,16 @@ local function IsEnabled()
 end
 
 ---------------------------------------------------------------- 当前专业
--- 把 skillLineID 换成专业名：先问 C_TradeSkillUI，再在 Craft.GetProfessions() 里找
-local function GetProfessionNameBySkillLine(skillLineID)
-    if type(skillLineID) ~= "number" then
+-- 当前训练师类型（Craft.Trainers 的键）；判定链见 CraftCore.lua 的 Craft.GetCurrentTrainerType。
+-- 读不到返回 nil（不猜测），调用方据此隐藏标记。
+local function GetCurrentTypeName()
+    if type(Craft.GetCurrentTrainerType) ~= "function" then
         return nil
     end
-
-    local UI = C_TradeSkillUI
-    if type(UI) == "table" and type(UI.GetProfessionInfoBySkillLineID) == "function" then
-        local ok, info = pcall(UI.GetProfessionInfoBySkillLineID, skillLineID)
-        if ok and type(info) == "table" and type(info.professionName) == "string"
-            and info.professionName ~= "" then
-            return info.professionName
-        end
+    local ok, typeName = pcall(Craft.GetCurrentTrainerType)
+    if ok and type(typeName) == "string" and typeName ~= "" then
+        return typeName
     end
-
-    if type(Craft.GetProfessions) == "function" then
-        local ok, professions = pcall(Craft.GetProfessions)
-        if ok and type(professions) == "table" then
-            for _, profession in ipairs(professions) do
-                if type(profession) == "table" and profession.skillLineID == skillLineID
-                    and type(profession.name) == "string" then
-                    return profession.name
-                end
-            end
-        end
-    end
-
-    return nil
-end
-
--- 当前专业名；读不到返回 nil
-local function GetCurrentTypeName()
-    if type(Craft.GetOpenProfession) == "function" then
-        local ok, skillLineID = pcall(Craft.GetOpenProfession)
-        if ok then
-            local name = GetProfessionNameBySkillLine(skillLineID)
-            if name then
-                return name
-            end
-        end
-    end
-
-    local db = GetDB()
-    if db and type(db.lastProfession) == "string" and db.lastProfession ~= "" then
-        return db.lastProfession
-    end
-
-    if type(Craft.GetProfessions) == "function" then
-        local ok, professions = pcall(Craft.GetProfessions)
-        if ok and type(professions) == "table" and type(professions[1]) == "table"
-            and type(professions[1].name) == "string" then
-            return professions[1].name
-        end
-    end
-
     return nil
 end
 
@@ -194,7 +148,12 @@ local function FindNearest()
     if not typeName then
         return nil
     end
-    local trainers = type(Craft.Trainers) == "table" and Craft.Trainers[typeName] or nil
+    -- 规范成 Craft.Trainers 的数据键（如「工程学」→「工程」）；映射不到时按原样取，取不到自然返回 nil
+    local typeKey = typeName
+    if type(Craft.FindTrainerTypeKey) == "function" then
+        typeKey = Craft.FindTrainerTypeKey(typeName) or typeName
+    end
+    local trainers = type(Craft.Trainers) == "table" and Craft.Trainers[typeKey] or nil
     if type(trainers) ~= "table" then
         return nil
     end
@@ -247,7 +206,7 @@ local function FindNearest()
         x = best.x / 100,
         y = best.y / 100,
         mapID = mapID,
-        typeName = typeName,
+        typeName = typeKey,
     }
 end
 
@@ -676,11 +635,15 @@ local function EnsureWorldMarkers()
     return worldBorder, worldFill, canvas, worldParent, worldUsesAtlas
 end
 
--- debug 快照：训练师、地图 ID、换算坐标、偏移、画布尺寸/缩放、贴图父级、连续失败计数
+-- debug 快照：训练师类型、训练师、地图 ID、换算坐标、偏移、画布尺寸/缩放、贴图父级、连续失败计数
 local function DescribeWorldMarker(canvas, width, height, offsetX, offsetY, nearest, displayMapID, mapX, mapY)
     local trainerName = "?"
     if nearest and type(nearest.trainer) == "table" and type(nearest.trainer.name) == "string" then
         trainerName = nearest.trainer.name
+    end
+    local typeName = "?"
+    if nearest and type(nearest.typeName) == "string" and nearest.typeName ~= "" then
+        typeName = nearest.typeName
     end
     local fillShown = "?"
     if worldFill and type(worldFill.IsShown) == "function" then
@@ -693,9 +656,9 @@ local function DescribeWorldMarker(canvas, width, height, offsetX, offsetY, near
         if okScale then canvasScale = string.format("%.4f", scale) end
     end
     return string.format(
-        "world: trainer=%s nearestMap=%s displayMap=%s mapXY=%.4f,%.4f offset=%.1f,%.1f "
+        "world: type=%s trainer=%s nearestMap=%s displayMap=%s mapXY=%.4f,%.4f offset=%.1f,%.1f "
             .. "canvas=%sx%s canvasScale=%s parentIsCanvas=%s fillShown=%s fails=%d",
-        trainerName, tostring(nearest and nearest.mapID), tostring(displayMapID),
+        typeName, trainerName, tostring(nearest and nearest.mapID), tostring(displayMapID),
         mapX, mapY, offsetX, offsetY,
         tostring(width), tostring(height), canvasScale,
         tostring(worldParent ~= nil and worldParent == canvas), tostring(fillShown),

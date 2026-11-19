@@ -257,6 +257,104 @@ function Craft.GetOpenProfession()
     return nil
 end
 
+-- 专业窗口"当前可见"时的 skillLineID；窗口不可见或判断失败返回 nil。
+-- 与 GetOpenProfession 的区别：selectedSkillLine 在窗口关闭后不会清空（暴雪 OnHide 不重置），
+-- GetOpenProfession 可能返回玩家最后浏览过的页签；需要"窗口真的开着"时用本函数。
+function Craft.GetVisibleProfession()
+    local frame = _G.ProfessionsFrame
+    if type(frame) ~= "table" or type(frame.IsShown) ~= "function" then
+        return nil
+    end
+    local okShown, shown = pcall(frame.IsShown, frame)
+    if not okShown or not shown then
+        return nil
+    end
+    if type(frame.selectedSkillLine) == "number" then
+        return frame.selectedSkillLine
+    end
+    return GetSkillLineFromFrame()
+end
+
+---------------------------------------------------------------- 训练师类型
+-- 大小写不敏感的包含匹配（任一方包含另一方即视为同一项）
+local function IsNameMatch(entry, name)
+    if type(entry) ~= "string" or type(name) ~= "string" then
+        return false
+    end
+    local a = string.lower(entry)
+    local b = string.lower(name)
+    if a == "" or b == "" then
+        return false
+    end
+    return string.find(a, b, 1, true) ~= nil or string.find(b, a, 1, true) ~= nil
+end
+
+-- 专业名 → Craft.Trainers 的键。数据层键名有简称（如「炼金」「草药」），
+-- 而游戏读到的专业名可能是「炼金术」「草药学」，先精确匹配再做双向包含匹配。
+function Craft.FindTrainerTypeKey(professionName)
+    local trainers = Craft.Trainers
+    if type(trainers) ~= "table" or type(professionName) ~= "string" or professionName == "" then
+        return nil
+    end
+    if type(trainers[professionName]) == "table" then
+        return professionName
+    end
+    local keys = {}
+    for key in pairs(trainers) do
+        if type(key) == "string" then
+            keys[#keys + 1] = key
+        end
+    end
+    table.sort(keys)
+    for _, key in ipairs(keys) do
+        if type(trainers[key]) == "table" and IsNameMatch(key, professionName) then
+            return key
+        end
+    end
+    return nil
+end
+
+-- skillLineID → 已学专业名；读不到返回 nil
+local function GetProfessionNameBySkillLineID(skillLineID)
+    if type(skillLineID) ~= "number" then
+        return nil
+    end
+    for _, prof in ipairs(Craft.GetProfessions()) do
+        if type(prof) == "table" and prof.skillLineID == skillLineID
+            and type(prof.name) == "string" and prof.name ~= "" then
+            return prof.name
+        end
+    end
+    return nil
+end
+
+-- 训练师标记 / 查询使用的类型（Craft.Trainers 的键），命令层与标记层统一走这里：
+-- ① 显式指定过的类型（wjwCraftDB.trainerType）；
+-- ② 专业窗口可见时的专业（GetVisibleProfession）；
+-- ③ 上次规划过的专业（wjwCraftDB.lastProfession）。
+-- 都取不到返回 nil——不再猜测"第一个已学专业"，避免标错类型。
+function Craft.GetCurrentTrainerType()
+    local db = type(wjwCraftDB) == "table" and wjwCraftDB or nil
+
+    if db and type(db.trainerType) == "string" and db.trainerType ~= "" then
+        return db.trainerType
+    end
+
+    local skillLineID = Craft.GetVisibleProfession()
+    if type(skillLineID) == "number" then
+        local key = Craft.FindTrainerTypeKey(GetProfessionNameBySkillLineID(skillLineID))
+        if key then
+            return key
+        end
+    end
+
+    if db and type(db.lastProfession) == "string" and db.lastProfession ~= "" then
+        return Craft.FindTrainerTypeKey(db.lastProfession) or db.lastProfession
+    end
+
+    return nil
+end
+
 ---------------------------------------------------------------- 配方数据准备
 -- 已尝试过打开窗口的专业：每个专业只弹一次窗口，失败后不再重复打扰
 local openAttempted = {}

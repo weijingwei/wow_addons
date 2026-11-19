@@ -29,6 +29,7 @@ local function EnsureDB()
     if type(wjwCraftDB.skipRecipes) ~= "table" then wjwCraftDB.skipRecipes = {} end
     if type(wjwCraftDB.targetLevel) ~= "number" then wjwCraftDB.targetLevel = nil end
     if type(wjwCraftDB.lastProfession) ~= "string" then wjwCraftDB.lastProfession = nil end
+    if type(wjwCraftDB.trainerType) ~= "string" then wjwCraftDB.trainerType = nil end
     if wjwCraftDB.autoSelect == nil then wjwCraftDB.autoSelect = true end
     if wjwCraftDB.debug == nil then wjwCraftDB.debug = false end
     db = wjwCraftDB
@@ -200,6 +201,12 @@ local function RunPlan(professionName, targetLevel)
     end
     if type(plan.professionName) == "string" then
         db.lastProfession = plan.professionName
+        -- 规划成功也视为用户明确选了这个专业：能映射到训练师数据键就记住，标记层沿用它
+        local key = type(Craft.FindTrainerTypeKey) == "function"
+            and Craft.FindTrainerTypeKey(plan.professionName) or nil
+        if key then
+            db.trainerType = key
+        end
     end
 end
 
@@ -433,71 +440,20 @@ local function FilterByCurrentMap(candidates, currentMap)
     return {}
 end
 
--- skillLineID → 专业名：先查已学专业列表，再退回 C_TradeSkillUI
-local function GetProfessionNameBySkillLine(skillLineID)
-    if type(skillLineID) ~= "number" then
-        return nil
+-- 专业名/类型名 → Craft.Trainers 的键（实现在 CraftCore.lua，命令层与标记层共用）；
+-- 数据层未提供该接口时按原样返回，不影响后续提示
+local function ToTrainerTypeKey(name)
+    if type(Craft.FindTrainerTypeKey) == "function" then
+        return Craft.FindTrainerTypeKey(name) or name
     end
-    if type(Craft.GetProfessions) == "function" then
-        local ok, professions = pcall(Craft.GetProfessions)
-        if ok and type(professions) == "table" then
-            for _, profession in ipairs(professions) do
-                if type(profession) == "table" and profession.skillLineID == skillLineID
-                    and type(profession.name) == "string" and profession.name ~= "" then
-                    return profession.name
-                end
-            end
-        end
-    end
-    local UI = _G.C_TradeSkillUI
-    if type(UI) == "table" and type(UI.GetProfessionInfoBySkillLineID) == "function" then
-        local ok, info = pcall(UI.GetProfessionInfoBySkillLineID, skillLineID)
-        if ok and type(info) == "table" and type(info.professionName) == "string"
-            and info.professionName ~= "" then
-            return info.professionName
-        end
-    end
-    return nil
+    return name
 end
 
--- 专业名 → Craft.Trainers 的键。数据层键名有简称（如「炼金」「草药」），
--- 而游戏读到的专业名可能是「炼金术」「草药学」，先精确匹配再做双向包含匹配。
-local function FindTrainerTypeKey(professionName)
-    local trainers = Craft.Trainers
-    if type(trainers) ~= "table" or type(professionName) ~= "string" or professionName == "" then
-        return nil
-    end
-    if type(trainers[professionName]) == "table" then
-        return professionName
-    end
-    local keys = {}
-    for key in pairs(trainers) do
-        if type(key) == "string" then
-            keys[#keys + 1] = key
-        end
-    end
-    table.sort(keys)
-    for _, key in ipairs(keys) do
-        if type(trainers[key]) == "table" and IsNameMatch(key, professionName) then
-            return key
-        end
-    end
-    return nil
-end
-
--- 当前专业名：① 当前打开的专业窗口；② 上次规划过的专业。都读不到返回 nil。
+-- 当前训练师类型（Craft.Trainers 的键）；判定链统一在 CraftCore.lua 的 Craft.GetCurrentTrainerType：
+-- ① 显式指定过的类型；② 专业窗口可见时的专业；③ 上次规划过的专业。都取不到返回 nil。
 local function GetCurrentProfessionName()
-    if type(Craft.GetOpenProfession) == "function" then
-        local ok, skillLineID = pcall(Craft.GetOpenProfession)
-        if ok then
-            local name = GetProfessionNameBySkillLine(skillLineID)
-            if name then
-                return name
-            end
-        end
-    end
-    if db and type(db.lastProfession) == "string" and db.lastProfession ~= "" then
-        return db.lastProfession
+    if type(Craft.GetCurrentTrainerType) == "function" then
+        return Craft.GetCurrentTrainerType()
     end
     return nil
 end
@@ -507,18 +463,20 @@ local function ShowTrainers(args)
 
     local typeName, showAll = ParseTrainerArgs(args)
     local queryCurrentProfession = false
+    local explicitTypeName = false
 
-    -- 无类型名且未加 all：跟随当前专业；识别不到就提示用法，不退化成全部类型
+    -- 无类型名且未加 all：按统一判定链跟随当前类型；识别不到就提示用法，不退化成全部类型
     if not typeName and not showAll then
-        local professionName = GetCurrentProfessionName()
-        if professionName then
-            typeName = FindTrainerTypeKey(professionName) or professionName
-        end
+        typeName = GetCurrentProfessionName()
         if not typeName then
             Say("未识别当前专业。用法：/wjw craft trainer <专业名>，例如 /wjw craft trainer 工程学")
             return
         end
         queryCurrentProfession = true
+    elseif typeName then
+        -- 显式给出的类型先规范成数据键（如「工程学」→「工程」），与标记层口径一致
+        explicitTypeName = true
+        typeName = ToTrainerTypeKey(typeName)
     end
 
     local candidates = CollectTrainers(typeName)
@@ -530,6 +488,14 @@ local function ShowTrainers(args)
             Say("内置数据中没有训练师坐标。")
         end
         return
+    end
+
+    -- 显式指定的类型确有数据才记住（校验失败不写），之后地图标记沿用它
+    if explicitTypeName and type(Craft.FindTrainerTypeKey) == "function" then
+        local key = Craft.FindTrainerTypeKey(typeName)
+        if key then
+            db.trainerType = key
+        end
     end
 
     local total = #candidates
