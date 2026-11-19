@@ -901,3 +901,4 @@ end
 
 SLASH_QUESTPATH1 = "/qp"
 SlashCmdList["QUESTPATH"] = HandleSlash
+QuestPath.HandleSlash = HandleSlash

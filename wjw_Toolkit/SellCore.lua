@@ -527,7 +527,7 @@ NS.SetEnabled = SetEnabled
 
 SLASH_WUXIANAUTOSELL1 = "/xsell"
 SLASH_WUXIANAUTOSELL2 = "/无限卖垃圾"
-SlashCmdList["WUXIANAUTOSELL"] = function(msg)
+local function SellCommand(msg)
     if not db then EnsureDB() end
 
     local cmd, rest = Trim(msg):match("^(%S*)%s*(.-)$")
@@ -563,20 +563,43 @@ SlashCmdList["WUXIANAUTOSELL"] = function(msg)
     end
 end
 
----------------------------------------------------------------- 总帮助
-SLASH_WJW1 = "/wjw"
-SlashCmdList["WJW"] = function()
+NS.SellCommand = SellCommand
+SlashCmdList["WUXIANAUTOSELL"] = SellCommand
+
+---------------------------------------------------------------- 命令总入口
+local function ShowWJWHelp()
     Print("wjw_工具箱 · 用法")
-    Print("  /qp                任务寻路：查看当前目标与距离")
-    Print("  /qp quest          用当前选中/追踪的任务设目标")
-    Print("  /qp clear          清除目标")
-    Print("  /qp auto on|off    自动跟随任务开关")
-    Print("  /qp arrow on|off   屏幕箭头开关")
-    Print("  /qp quiet on|off   静默模式")
-    Print("  /xsell             自动卖垃圾开/关")
-    Print("  /xsell add|remove|list|clear  永不卖出名单")
-    Print("  /xsell config      打开设置面板")
+    Print("  /wjw qp                           任务寻路：查看当前目标与距离")
+    Print("  /wjw qp <x> <y>                   按地图百分比设定目标（0-1 或 0-100）")
+    Print("  /wjw qp quest                     用当前选中/追踪的任务设定目标")
+    Print("  /wjw qp clear                     清除目标")
+    Print("  /wjw qp auto on|off               自动跟随任务开关")
+    Print("  /wjw qp arrow on|off              屏幕箭头开关")
+    Print("  /wjw qp quiet on|off              静默模式")
+    Print("  /wjw qp debug                     打印排障信息")
+    Print("  /wjw sell                         自动卖垃圾开/关")
+    Print("  /wjw sell on|off|status           开关状态")
+    Print("  /wjw sell add|remove|list|clear   永不卖出名单")
+    Print("  /wjw sell config                  打开卖垃圾设置面板")
+    Print("旧命令 /qp、/xsell 仍然可用。")
     Print("设置页：选项 → 插件 → wjw_工具箱 · 任务寻路 / wjw_工具箱 · 自动卖垃圾")
+end
+
+SLASH_WJW1 = "/wjw"
+SlashCmdList["WJW"] = function(msg)
+    local cmd, rest = Trim(msg):match("^(%S*)%s*(.-)$")
+    cmd = (cmd or ""):lower()
+    if cmd == "qp" then
+        if QuestPath and QuestPath.HandleSlash then
+            QuestPath.HandleSlash(rest)
+        else
+            Print("任务寻路模块未加载，请检查 PathCore.lua。")
+        end
+    elseif cmd == "sell" or cmd == "xsell" then
+        SellCommand(rest)
+    else
+        ShowWJWHelp()
+    end
 end
 
 ---------------------------------------------------------------- 事件

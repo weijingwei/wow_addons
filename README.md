@@ -22,17 +22,19 @@
 
 | 命令 | 说明 |
 |---|---|
-| `/wjw` | 查看两个功能的全部命令（总帮助） |
-| `/qp` | 查看当前目标与距离 |
-| `/qp quest` | 用当前选中/追踪的任务设定目标 |
-| `/qp clear` | 清除目标 |
-| `/qp auto on\|off` | 自动跟随追踪/选中任务（默认开启） |
-| `/qp arrow on\|off` | 屏幕箭头开关 |
-| `/xsell` | 开 / 关自动卖出（不带参数直接切换） |
-| `/xsell add` | 把鼠标指向的物品加入永不卖出名单 |
-| `/xsell remove` | 从永不卖出名单移除物品（可带 itemID 或名字片段） |
-| `/xsell list` | 查看永不卖出名单 |
-| `/xsell clear` | 清空永不卖出名单 |
+| `/wjw` | 总入口，列出全部命令与设置页位置；也可直接用 `/wjw qp`、`/wjw sell` |
+| `/wjw qp` | 查看当前目标与距离 |
+| `/wjw qp quest` | 用当前选中/追踪的任务设定目标 |
+| `/wjw qp clear` | 清除目标 |
+| `/wjw qp auto on\|off` | 自动跟随追踪/选中任务（默认开启） |
+| `/wjw qp arrow on\|off` | 屏幕箭头开关 |
+| `/wjw sell` | 开 / 关自动卖出（不带参数直接切换） |
+| `/wjw sell add` | 把鼠标指向的物品加入永不卖出名单 |
+| `/wjw sell remove` | 从永不卖出名单移除物品（可带 itemID 或名字片段） |
+| `/wjw sell list` | 查看永不卖出名单 |
+| `/wjw sell clear` | 清空永不卖出名单 |
+
+旧命令 `/qp`、`/xsell` 保留为别名，效果完全相同。
 
 ## 设置页
 
