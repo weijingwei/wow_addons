@@ -24,9 +24,11 @@
         像素距离 = 距离 / C_Minimap.GetViewRadius() * 半径，
         rotateMinimap 开启时屏幕角度再减去玩家朝向。
       * 世界地图：PathOverlay.lua 的 UpdateWorldMap（536–537 行）——
-        归一化坐标换算成画布像素。这里用 canvas 的 TOPLEFT 锚点 + 负 Y
-        表达同一个公式 x*W, (1-y)*H；世界地图停在上级地图时用
-        QP.ConvertBetweenMaps（PathMap.lua:85）换算，换算失败则隐藏。
+        归一化坐标换算成画布像素。贴图直接创建在地图画布上，锚点用
+        canvas 的 TOPLEFT + 负 Y 表达同一个公式 x*W, (1-y)*H（画布局部
+        坐标，缩放由画布自身处理，不再乘 canvas:GetScale()）。世界地图
+        停在上级地图时用 QP.ConvertBetweenMaps（PathMap.lua:85）换算；
+        偶发失败时保留上一次成功位置，连续 3 次失败才隐藏。
 
     兼容与安全：
       * C_Map / C_Minimap / Texture / C_Timer 调用全部先 type() 守卫，
@@ -46,6 +48,10 @@ end
 local MARKER_SIZE        = 10      -- 回退样式：内层金色圆点边长（像素）
 local MARKER_BORDER_SIZE = 14      -- 回退样式：外层深色描边边长（托底，避免金色压在亮地图上看不清）
 local ATLAS_MARKER_SIZE  = 18      -- 图标图集样式的边长
+local WORLD_MARKER_SIZE        = 12  -- 世界地图回退样式：内层金色圆点边长（大地图上更醒目）
+local WORLD_MARKER_BORDER_SIZE = 16  -- 世界地图回退样式：外层深色描边边长
+local WORLD_ATLAS_MARKER_SIZE  = 24  -- 世界地图图标图集样式的边长
+local WORLD_FAIL_LIMIT         = 3   -- 世界地图连续刷新失败上限，达到才隐藏标记
 local MINIMAP_MARGIN     = 8       -- 贴边时标记中心距小地图边缘的余量
 local TICKER_SECONDS     = 2       -- 小地图/世界地图定时刷新间隔
 local WORLD_RETRY_SECONDS = 0.5    -- 世界地图画布未就绪时的重试间隔
@@ -466,11 +472,15 @@ local function UpdateMinimapMarker(nearest)
 end
 
 ---------------------------------------------------------------- 世界地图标记
-local worldFrame
 local worldBorder
 local worldFill
-local worldParent
+local worldParent        -- 贴图当前父级：正常情况就是 WorldMapFrame 的 canvas
+local worldContainer     -- 兜底：画布不能直接挂贴图时才创建的中转框体
 local worldUsesAtlas
+
+-- 最近一次成功绘制的位置；刷新偶发失败时保留它，避免标记闪一下就没
+local lastWorldDraw      -- { mapX = , mapY = , mapID = }
+local worldFailCount = 0
 
 -- Refresh 定义在文件后半段；这里先声明，供画布未就绪时的延迟重试回调调用
 local Refresh
@@ -486,10 +496,10 @@ end
 
 local function DestroyWorldMarkers()
     HideWorldMarkers()
-    if worldFrame then
-        pcall(worldFrame.Hide, worldFrame)
+    if worldContainer then
+        pcall(worldContainer.Hide, worldContainer)
     end
-    worldFrame, worldBorder, worldFill, worldParent, worldUsesAtlas = nil, nil, nil, nil, nil
+    worldBorder, worldFill, worldParent, worldContainer, worldUsesAtlas = nil, nil, nil, nil, nil
 end
 
 local worldRetryCount = 0
@@ -554,84 +564,124 @@ local function ResolveDisplayMapID()
     return nil
 end
 
--- 每次调用都核对绘制层父级：地图关闭再打开时游戏可能重建 canvas（同 PathOverlay.lua:479–499）
+-- 刷新失败时不要立刻收掉标记：地图数据偶发不可用（专业窗口切换、坐标暂不可得、
+-- 跨地图换算失败）时保留上一次成功绘制的位置；只有连续失败到上限、或当前显示的
+-- 地图已经不是上次绘制那张图时才隐藏。
+local function FailWorldDraw(reason, displayMapID)
+    worldFailCount = worldFailCount + 1
+    local keep = lastWorldDraw ~= nil
+        and displayMapID ~= nil
+        and lastWorldDraw.mapID == displayMapID
+        and worldFailCount < WORLD_FAIL_LIMIT
+    if keep then
+        DebugPrint(string.format("%s（连续失败 %d/%d，保留上次位置）",
+            reason, worldFailCount, WORLD_FAIL_LIMIT))
+        return
+    end
+    DebugPrint(string.format("%s（连续失败 %d/%d，隐藏标记）",
+        reason, worldFailCount, WORLD_FAIL_LIMIT))
+    lastWorldDraw = nil
+    HideWorldMarkers()
+end
+
+-- 每次调用都核对贴图父级：地图关闭再打开时游戏可能重建 canvas（同 PathOverlay.lua:482–499）。
+-- 贴图直接创建在画布上，坐标使用画布局部单位；画布自身的缩放与平移会一并作用到贴图上，
+-- 不需要也不应该再乘 canvas:GetScale()。
 local function EnsureWorldMarkers()
     local frame = WorldMapFrame
     if not frame or type(frame.GetCanvas) ~= "function" then
         return nil
     end
     local okCanvas, canvas = pcall(frame.GetCanvas, frame)
-    if not okCanvas or not canvas or type(canvas.CreateTexture) ~= "function" then
+    if not okCanvas or not canvas then
         return nil
     end
-    if worldFrame and worldParent == canvas then
-        return worldBorder, worldFill, canvas, worldUsesAtlas
+    if worldBorder and worldFill and worldParent == canvas then
+        return worldBorder, worldFill, canvas, worldParent, worldUsesAtlas
     end
 
+    -- 父级变了（画布被重建）或首次创建：旧贴图收起后按新画布重建
+    if worldBorder or worldFill then
+        DebugPrint("world: canvas changed, rebuild markers")
+    end
     DestroyWorldMarkers()
-    local okFrame, newFrame = pcall(CreateFrame, "Frame", nil, canvas)
-    if not okFrame or not newFrame then
-        return nil
-    end
-    local okSetup = pcall(function()
-        newFrame:SetAllPoints(canvas)
-        -- 画布上还叠着 POI 图钉等子框体，只加 1 层可能被盖住；抬到 +100 确保标记在最上层
-        newFrame:SetFrameLevel(canvas:GetFrameLevel() + 100)
-        newFrame:Show()
-    end)
-    if not okSetup then
-        pcall(newFrame.Hide, newFrame)
-        return nil
+
+    local parent = canvas
+    if type(canvas.CreateTexture) ~= "function" then
+        -- 兜底：画布不允许直接挂贴图时，退回同尺寸的中转框体（坐标与画布一致）
+        local okFrame, container = pcall(CreateFrame, "Frame", nil, canvas)
+        if not okFrame or not container then
+            return nil
+        end
+        local okSetup = pcall(function()
+            container:SetAllPoints(canvas)
+            container:SetFrameLevel(canvas:GetFrameLevel() + 100)
+            container:Show()
+        end)
+        if not okSetup then
+            pcall(container.Hide, container)
+            return nil
+        end
+        parent = container
+        worldContainer = container
     end
 
-    local border = CreateMarkerTexture(newFrame)
-    local fill = CreateMarkerTexture(newFrame)
+    local border = CreateMarkerTexture(parent)
+    local fill = CreateMarkerTexture(parent)
     local okBorder = border
-        and ConfigureMarkerTexture(border, MARKER_BORDER_SIZE, 0, BORDER_R, BORDER_G, BORDER_B, BORDER_ALPHA)
+        and ConfigureMarkerTexture(border, WORLD_MARKER_BORDER_SIZE, 0,
+            BORDER_R, BORDER_G, BORDER_B, BORDER_ALPHA)
     -- 同小地图：不能写成 `fill and ConfigureMarkerTexture(...)`，否则 usedAtlas 恒为 nil，
     -- 托底方块会一直显示（Lua 5.1 的 and 截断右侧调用的多返回值）。
     local okFill, usedAtlas, atlasName
     if fill then
-        okFill, usedAtlas, atlasName = ConfigureMarkerTexture(fill, MARKER_SIZE, 1,
-            MARKER_R, MARKER_G, MARKER_B, MARKER_ALPHA, true, ATLAS_MARKER_SIZE)
+        okFill, usedAtlas, atlasName = ConfigureMarkerTexture(fill, WORLD_MARKER_SIZE, 1,
+            MARKER_R, MARKER_G, MARKER_B, MARKER_ALPHA, true, WORLD_ATLAS_MARKER_SIZE)
     end
     if not okBorder or not okFill then
-        pcall(newFrame.Hide, newFrame)
+        if border then pcall(border.Hide, border) end
+        if fill then pcall(fill.Hide, fill) end
+        if worldContainer then
+            pcall(worldContainer.Hide, worldContainer)
+            worldContainer = nil
+        end
         return nil
     end
 
-    worldFrame, worldParent = newFrame, canvas
-    worldBorder, worldFill = border, fill
+    worldBorder, worldFill, worldParent = border, fill, parent
     worldUsesAtlas = usedAtlas == true
     if worldUsesAtlas then
         DebugPrint("world marker atlas: " .. tostring(atlasName))
     else
         DebugPrint("world marker atlas: none（纯色回退）")
     end
-    return worldBorder, worldFill, canvas, worldUsesAtlas
+    return worldBorder, worldFill, canvas, worldParent, worldUsesAtlas
 end
 
--- debug 模式下的定位/层级快照：偏移、画布尺寸、框体层级与可见性
-local function DescribeWorldMarker(canvas, offsetX, offsetY, width, height)
-    local frameLevel, canvasLevel, frameShown, fillShown = "?", "?", "?", "?"
-    if worldFrame then
-        local okLevel, level = pcall(worldFrame.GetFrameLevel, worldFrame)
-        if okLevel then frameLevel = level end
-        local okFrameShown, value = pcall(worldFrame.IsShown, worldFrame)
-        if okFrameShown then frameShown = value end
+-- debug 快照：训练师、地图 ID、换算坐标、偏移、画布尺寸/缩放、贴图父级、连续失败计数
+local function DescribeWorldMarker(canvas, width, height, offsetX, offsetY, nearest, displayMapID, mapX, mapY)
+    local trainerName = "?"
+    if nearest and type(nearest.trainer) == "table" and type(nearest.trainer.name) == "string" then
+        trainerName = nearest.trainer.name
     end
-    if canvas then
-        local okLevel, level = pcall(canvas.GetFrameLevel, canvas)
-        if okLevel then canvasLevel = level end
-    end
-    if worldFill then
+    local fillShown = "?"
+    if worldFill and type(worldFill.IsShown) == "function" then
         local okShown, value = pcall(worldFill.IsShown, worldFill)
-        if okShown then fillShown = value end
+        if okShown then fillShown = tostring(value) end
+    end
+    local canvasScale = "?"
+    if canvas and type(canvas.GetScale) == "function" then
+        local okScale, scale = pcall(canvas.GetScale, canvas)
+        if okScale then canvasScale = string.format("%.4f", scale) end
     end
     return string.format(
-        "world: x=%.1f y=%.1f canvas=%sx%s frameLevel=%s canvasLevel=%s frameShown=%s fillShown=%s",
-        offsetX, offsetY, tostring(width), tostring(height),
-        tostring(frameLevel), tostring(canvasLevel), tostring(frameShown), tostring(fillShown))
+        "world: trainer=%s nearestMap=%s displayMap=%s mapXY=%.4f,%.4f offset=%.1f,%.1f "
+            .. "canvas=%sx%s canvasScale=%s parentIsCanvas=%s fillShown=%s fails=%d",
+        trainerName, tostring(nearest and nearest.mapID), tostring(displayMapID),
+        mapX, mapY, offsetX, offsetY,
+        tostring(width), tostring(height), canvasScale,
+        tostring(worldParent ~= nil and worldParent == canvas), tostring(fillShown),
+        worldFailCount)
 end
 
 local function UpdateWorldMarker(nearest)
@@ -643,15 +693,16 @@ local function UpdateWorldMarker(nearest)
     end
     local okShown, shown = pcall(frame.IsShown, frame)
     if not okShown or not shown then
+        -- 地图没开：收起即可，缓存留到下次打开时继续用
         ResetWorldRetry()
+        worldFailCount = 0
         HideWorldMarkers()
         return
     end
 
     local displayMapID = ResolveDisplayMapID()
     if not displayMapID then
-        ResetWorldRetry()
-        HideWorldMarkers()
+        FailWorldDraw("world: no display mapID", nil)
         return
     end
 
@@ -668,14 +719,13 @@ local function UpdateWorldMarker(nearest)
         end
     end
     if type(mapX) ~= "number" or type(mapY) ~= "number" then
-        DebugPrint("world: convert failed")
-        ResetWorldRetry()
-        HideWorldMarkers()
+        -- 换算失败：同一张显示地图时保留上次成功画出的位置
+        FailWorldDraw("world: convert failed", displayMapID)
         return
     end
 
-    local border, fill, canvas, usedAtlas = EnsureWorldMarkers()
-    if not border or not fill or not canvas then
+    local border, fill, canvas, parent, usedAtlas = EnsureWorldMarkers()
+    if not border or not fill or not canvas or not parent then
         ScheduleWorldRetry("world: no canvas")
         return
     end
@@ -692,31 +742,36 @@ local function UpdateWorldMarker(nearest)
 
     ResetWorldRetry()
 
-    -- PathOverlay.lua:536–537 以 BOTTOMLEFT 为原点写 x*W, (1-y)*H；
-    -- 这里改用 TOPLEFT 锚点 + 负 Y，两条公式画在同一像素位置。
-    -- 贴图挂在绘制层框体（与 canvas 同尺寸）的 TOPLEFT，避免跨框体锚定。
+    -- 画布局部坐标：x∈[0,1] 映射到 [0,W]，y 自顶向下，所以 Y 取负。
+    -- 贴图直接挂在画布上（或兜底的中转框体，其 TOPLEFT 与画布重合），
+    -- 画布缩放 0.6956 之类由画布自身处理，这里绝不乘 GetScale()。
     local offsetX, offsetY = mapX * width, -mapY * height
     local okPoint = pcall(function()
         border:ClearAllPoints()
         fill:ClearAllPoints()
         if usedAtlas then
             border:Hide()
-            fill:SetPoint("CENTER", worldFrame, "TOPLEFT", offsetX, offsetY)
+            fill:SetPoint("CENTER", parent, "TOPLEFT", offsetX, offsetY)
             fill:Show()
         else
-            border:SetPoint("CENTER", worldFrame, "TOPLEFT", offsetX, offsetY)
+            border:SetPoint("CENTER", parent, "TOPLEFT", offsetX, offsetY)
             border:Show()
-            fill:SetPoint("CENTER", worldFrame, "TOPLEFT", offsetX, offsetY)
+            fill:SetPoint("CENTER", parent, "TOPLEFT", offsetX, offsetY)
             fill:Show()
         end
     end)
     if not okPoint then
         ResetWorldRetry()
-        HideWorldMarkers()
+        FailWorldDraw("world: SetPoint failed", displayMapID)
         return
     end
+
+    -- 画成功才更新缓存与失败计数
+    worldFailCount = 0
+    lastWorldDraw = { mapX = mapX, mapY = mapY, mapID = displayMapID }
     if IsDebug() then
-        DebugPrint(DescribeWorldMarker(canvas, offsetX, offsetY, width, height))
+        DebugPrint(DescribeWorldMarker(
+            canvas, width, height, offsetX, offsetY, nearest, displayMapID, mapX, mapY))
     end
 end
 
@@ -726,6 +781,10 @@ local ticker
 local function HideAllMarkers()
     HideMinimapMarkers()
     HideWorldMarkers()
+    -- 全量收起（功能关闭 / 未预料错误）时一并清掉世界地图缓存，
+    -- 避免下次刷新把标记画回到过期的位置
+    worldFailCount = 0
+    lastWorldDraw = nil
 end
 
 local function RefreshInternal()
@@ -735,7 +794,11 @@ local function RefreshInternal()
     end
     local nearest = FindNearest()
     if not nearest then
-        HideAllMarkers()
+        -- 偶发读不到（专业窗口切换、玩家坐标暂时不可得）时不立刻收掉世界地图标记：
+        -- 同一张显示地图时保留上次成功绘制的位置，连续失败到上限才隐藏。
+        -- 小地图没有位置缓存，照旧立即收起。
+        HideMinimapMarkers()
+        FailWorldDraw("world: no nearest", ResolveDisplayMapID())
         return
     end
     UpdateMinimapMarker(nearest)
