@@ -578,7 +578,14 @@ local function ShowWJWHelp()
     Print("  /wjw sell on|off|status           开关状态")
     Print("  /wjw sell add|remove|list|clear   永不卖出名单")
     Print("  /wjw sell config                  打开卖垃圾设置面板")
-    Print("设置页：选项 → 插件 → wjw_工具箱 · 任务寻路 / wjw_工具箱 · 自动卖垃圾")
+    Print("  /wjw craft                        专业技能升级规划")
+    Print("  /wjw craft <目标等级>             规划到指定等级")
+    Print("  /wjw craft <专业名> [目标等级]     指定专业规划")
+    Print("  /wjw craft skip <材料名>          跳过某材料")
+    Print("  /wjw craft skiprecipe <配方名>    跳过某配方")
+    Print("  /wjw craft list|reset             查看/清空跳过名单")
+    Print("  /wjw craft trainer [专业名]       训练师位置")
+    Print("设置页：选项 → 插件 → wjw_工具箱 · 任务寻路 / wjw_工具箱 · 自动卖垃圾 / wjw_工具箱 · 专业技能")
 end
 
 SLASH_WJW1 = "/wjw"
@@ -593,6 +600,12 @@ SlashCmdList["WJW"] = function(msg)
         end
     elseif cmd == "sell" or cmd == "xsell" then
         SellCommand(rest)
+    elseif cmd == "craft" then
+        if NS.Craft and NS.Craft.Command then
+            NS.Craft.Command(rest)
+        else
+            Print("专业技能模块未加载，请检查 CraftCore.lua 与 CraftCommand.lua。")
+        end
     else
         ShowWJWHelp()
     end

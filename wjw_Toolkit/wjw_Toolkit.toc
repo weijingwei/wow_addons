@@ -1,9 +1,9 @@
 ## Interface: 16001
 ## Title: wjw_工具箱
-## Notes: 任务寻路 + 自动卖垃圾。命令：/qp（寻路）、/xsell（卖垃圾）。
+## Notes: 任务寻路 + 自动卖垃圾 + 专业技能升级规划。命令统一入口：/wjw
 ## Author: wjw
-## Version: 1.0.0
-## SavedVariables: QuestPathDB, WuXianAutoSellDB
+## Version: 1.1.0
+## SavedVariables: QuestPathDB, WuXianAutoSellDB, wjwCraftDB
 
 PathCore.lua
 PathMap.lua
@@ -12,3 +12,7 @@ PathMain.lua
 SellCore.lua
 SellOptions.lua
 Options.lua
+CraftTrainerData.lua
+CraftCore.lua
+CraftCommand.lua
+CraftAutoSelect.lua
