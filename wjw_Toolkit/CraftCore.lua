@@ -597,6 +597,7 @@ function Craft.BuildPlan(skillLineID, targetLevel, options)
         "涨点概率为社区经验值估算（橙 100% / 黄 60% / 绿 25%）",
         "难度分界按规划区间的前 25% / 25%-65% / 余下估算，非官方数据",
         "备选材料按每个槽位第一项估算",
+        "优先消耗你已有的材料，其次才比较材料总件数",
     }
 
     -- 目标不高于当前等级：不需要规划
@@ -624,7 +625,18 @@ function Craft.BuildPlan(skillLineID, targetLevel, options)
     local segments = {}
     local materials = {}
     local inventory = {}
+    local remaining = {}
     local deadEnd = false
+
+    -- 剩余库存：惰性缓存，同一种材料只向游戏查询一次；段与段之间会扣减
+    local function GetRemaining(itemID)
+        local count = remaining[itemID]
+        if count == nil then
+            count = Craft.GetItemCount(itemID)
+            remaining[itemID] = count
+        end
+        return count
+    end
 
     while true do
         -- 到达目标即停
@@ -632,10 +644,12 @@ function Craft.BuildPlan(skillLineID, targetLevel, options)
             break
         end
 
-        -- 贪心：在所有能覆盖 cur 的配方里，选“到 min(maxTrivialLevel, target) 材料件数最少”的
-        -- 同价时优先能推进更远的配方，再按 recipeID 升序保证结果稳定
+        -- 贪心：在所有能覆盖 cur 的配方里，优先选“到 min(maxTrivialLevel, target) 缺口件数最少”的；
+        -- 缺口相同时再比材料总件数，仍相同则优先能推进更远的配方，最后按 recipeID 升序保证结果稳定。
+        -- 缺口 = Σ max(0, 本段需求 - 剩余库存)，剩余库存会随已选段扣减，避免重复把同一批材料算作可用。
         local best
-        local bestCost
+        local bestMissing
+        local bestTotal
         local bestTo
         for _, candidate in ipairs(candidates) do
             if candidate.maxTrivialLevel > cur then
@@ -645,13 +659,24 @@ function Craft.BuildPlan(skillLineID, targetLevel, options)
                 end
                 if toLevel > cur then
                     local crafts = ExpectedCrafts(cur, toLevel, candidate.numSkillUps)
-                    local cost = crafts * candidate.perCraftCount
+                    local missingCount = 0
+                    local totalCount = 0
+                    for _, reagent in ipairs(candidate.reagents) do
+                        local need = crafts * reagent.perCraft
+                        totalCount = totalCount + need
+                        local gap = need - GetRemaining(reagent.itemID)
+                        if gap > 0 then
+                            missingCount = missingCount + gap
+                        end
+                    end
                     if not best
-                        or cost < bestCost
-                        or (cost == bestCost and toLevel > bestTo)
-                        or (cost == bestCost and toLevel == bestTo and candidate.recipeID < best.recipeID) then
+                        or missingCount < bestMissing
+                        or (missingCount == bestMissing and totalCount < bestTotal)
+                        or (missingCount == bestMissing and totalCount == bestTotal and toLevel > bestTo)
+                        or (missingCount == bestMissing and totalCount == bestTotal and toLevel == bestTo and candidate.recipeID < best.recipeID) then
                         best = candidate
-                        bestCost = cost
+                        bestMissing = missingCount
+                        bestTotal = totalCount
                         bestTo = toLevel
                     end
                 end
@@ -669,7 +694,8 @@ function Craft.BuildPlan(skillLineID, targetLevel, options)
             local need = crafts * reagent.perCraft
             local have = inventory[reagent.itemID]
             if have == nil then
-                have = Craft.GetItemCount(reagent.itemID)
+                -- 该材料尚未在任何已选段出现，剩余库存此时仍是初始持有量；复用同一份缓存，避免重复查询
+                have = GetRemaining(reagent.itemID)
                 inventory[reagent.itemID] = have
             end
             local missing = need - have
@@ -685,6 +711,13 @@ function Craft.BuildPlan(skillLineID, targetLevel, options)
                 missing = missing,
             }
 
+            -- 本段消耗后扣减剩余库存，供后续选段评分使用，避免重复计算已有材料
+            local leftover = GetRemaining(reagent.itemID) - need
+            if leftover < 0 then
+                leftover = 0
+            end
+            remaining[reagent.itemID] = leftover
+
             local summary = materials[reagent.itemID]
             if not summary then
                 summary = { name = reagent.name, need = 0, have = have, missing = 0 }
@@ -699,6 +732,7 @@ function Craft.BuildPlan(skillLineID, targetLevel, options)
             recipeID = best.recipeID,
             recipeName = best.name,
             expectedCrafts = crafts,
+            missingCount = bestMissing,
             reagents = segmentReagents,
         }
 
@@ -753,11 +787,16 @@ function Craft.FormatPlan(plan)
     lines[#lines + 1] = "估算口径：橙 100% / 黄 60% / 绿 25%（社区经验值，非官方）"
 
     for _, segment in ipairs(plan.segments or {}) do
-        lines[#lines + 1] = string.format("%d → %d   %s ×%d",
+        local title = string.format("%d → %d   %s ×%d",
             math.floor(tonumber(segment.from) or 0),
             math.floor(tonumber(segment.to) or 0),
             tostring(segment.recipeName or segment.recipeID),
             math.floor(tonumber(segment.expectedCrafts) or 0))
+        -- missingCount 为数字且为 0 时，说明这一段要用的材料已经全部备齐
+        if tonumber(segment.missingCount) == 0 then
+            title = title .. "（材料已备齐）"
+        end
+        lines[#lines + 1] = title
 
         local parts = {}
         for _, reagent in ipairs(segment.reagents or {}) do
