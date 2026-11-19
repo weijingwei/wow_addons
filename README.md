@@ -22,6 +22,7 @@
 
 | 命令 | 说明 |
 |---|---|
+| `/wjw` | 查看两个功能的全部命令（总帮助） |
 | `/qp` | 查看当前目标与距离 |
 | `/qp quest` | 用当前选中/追踪的任务设定目标 |
 | `/qp clear` | 清除目标 |
@@ -55,4 +56,4 @@
 | `SellOptions.lua` | 自动卖垃圾设置面板 |
 | `Options.lua` | 任务寻路设置面板 |
 
-本目录下的 `QuestPath/`、`WuXianAutoSell/` 是合并前的两个独立插件，保留作参考，安装时只用 `wjw_Toolkit/`。
+本目录下的 `legacy/QuestPath/`、`legacy/WuXianAutoSell/` 是合并前的两个独立插件源码备份（不随插件发布，仅用于回退参考），安装时只用 `wjw_Toolkit/`。

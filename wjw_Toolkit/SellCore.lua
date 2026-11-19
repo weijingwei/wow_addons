@@ -563,6 +563,22 @@ SlashCmdList["WUXIANAUTOSELL"] = function(msg)
     end
 end
 
+---------------------------------------------------------------- 总帮助
+SLASH_WJW1 = "/wjw"
+SlashCmdList["WJW"] = function()
+    Print("wjw_工具箱 · 用法")
+    Print("  /qp                任务寻路：查看当前目标与距离")
+    Print("  /qp quest          用当前选中/追踪的任务设目标")
+    Print("  /qp clear          清除目标")
+    Print("  /qp auto on|off    自动跟随任务开关")
+    Print("  /qp arrow on|off   屏幕箭头开关")
+    Print("  /qp quiet on|off   静默模式")
+    Print("  /xsell             自动卖垃圾开/关")
+    Print("  /xsell add|remove|list|clear  永不卖出名单")
+    Print("  /xsell config      打开设置面板")
+    Print("设置页：选项 → 插件 → wjw_工具箱 · 任务寻路 / wjw_工具箱 · 自动卖垃圾")
+end
+
 ---------------------------------------------------------------- 事件
 local eventFrame = CreateFrame("Frame")
 eventFrame:RegisterEvent("ADDON_LOADED")
@@ -574,7 +590,7 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1)
         if arg1 ~= ADDON_NAME then return end
         EnsureDB()
         if NS.InitOptions then NS.InitOptions() end
-        Print(string.format("v%s 已加载，自动卖出当前%s。输入 /xsell help 查看命令。",
+        Print(string.format("v%s 已加载，自动卖出当前%s。输入 /wjw 查看用法。",
             NS.VERSION, db.enabled and "开启" or "关闭"))
     elseif event == "MERCHANT_SHOW" then
         if db and db.enabled then
