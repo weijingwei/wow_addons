@@ -341,63 +341,163 @@ local function GetCurrentMapID()
     return nil
 end
 
-local function ShowTrainers(professionName)
-    if not db then EnsureDB() end
-
-    -- 确定训练师类型名：显式参数 → 上次规划的专业 → 当前打开的专业
-    local typeName = Trim(professionName or "")
-    if typeName == "" then
-        typeName = db.lastProfession or ""
+-- 玩家地图链：自身 + 至多 maxDepth 级父地图（层级固定，不做无上限循环）
+local function GetMapChain(mapID, maxDepth)
+    local chain = {}
+    if type(mapID) ~= "number" then
+        return chain
     end
-    if typeName == "" and CoreReady() then
-        local openID = Craft.GetOpenProfession()
-        if openID then
-            for _, prof in ipairs(Craft.GetProfessions()) do
-                if prof.skillLineID == openID then
-                    typeName = prof.name or ""
-                    break
-                end
-            end
+    local id = mapID
+    for _ = 0, maxDepth do
+        chain[#chain + 1] = id
+        if type(_G.C_Map) ~= "table" or type(_G.C_Map.GetMapInfo) ~= "function" then
+            break
+        end
+        local ok, info = pcall(_G.C_Map.GetMapInfo, id)
+        if not ok or type(info) ~= "table"
+            or type(info.parentMapID) ~= "number" or info.parentMapID == 0 then
+            break
+        end
+        id = info.parentMapID
+    end
+    return chain
+end
+
+-- 解析 trainer 参数：识别 all 关键字，其余部分原样作为类型名
+local function ParseTrainerArgs(args)
+    local showAll = false
+    local words = {}
+    for token in tostring(args or ""):gmatch("%S+") do
+        if string.lower(token) == "all" then
+            showAll = true
+        else
+            words[#words + 1] = token
+        end
+    end
+    local typeName = Trim(table.concat(words, " "))
+    if typeName == "" then
+        typeName = nil
+    end
+    return typeName, showAll
+end
+
+-- 收集候选训练师：{ trainer = 记录, typeName = 类型名, ui = uiMapID }
+-- typeName 为 nil 时收集全部类型（类型顺序固定按名称排序，类型内保持数据原顺序）
+local function CollectTrainers(typeName)
+    local list = {}
+    if type(Craft.Trainers) ~= "table" then
+        return list
+    end
+    local zoneMap = (type(Craft.TrainerZoneMap) == "table") and Craft.TrainerZoneMap or nil
+
+    local function add(typeKey, trainers)
+        if type(trainers) ~= "table" then
+            return
+        end
+        for _, t in ipairs(trainers) do
+            local ui = zoneMap and zoneMap[t.zone] or nil
+            list[#list + 1] = { trainer = t, typeName = typeKey, ui = ui }
         end
     end
 
-    if typeName == "" then
-        Say("未指定训练师类型，也没能识别当前专业。用法：/wjw craft trainer <类型名>")
+    if typeName then
+        add(typeName, Craft.Trainers[typeName])
+    else
+        local typeNames = {}
+        for typeKey in pairs(Craft.Trainers) do
+            if type(typeKey) == "string" then
+                typeNames[#typeNames + 1] = typeKey
+            end
+        end
+        table.sort(typeNames)
+        for _, typeKey in ipairs(typeNames) do
+            add(typeKey, Craft.Trainers[typeKey])
+        end
+    end
+    return list
+end
+
+-- 当前地图过滤：精确匹配 → 父地图 → 祖父地图（最多回退 2 级，命中即停）
+local function FilterByCurrentMap(candidates, currentMap)
+    for _, mapID in ipairs(GetMapChain(currentMap, 2)) do
+        local matched = {}
+        for _, c in ipairs(candidates) do
+            if c.ui == mapID then
+                matched[#matched + 1] = c
+            end
+        end
+        if #matched > 0 then
+            return matched
+        end
+    end
+    return {}
+end
+
+local function ShowTrainers(args)
+    if not db then EnsureDB() end
+
+    local typeName, showAll = ParseTrainerArgs(args)
+    local candidates = CollectTrainers(typeName)
+
+    if #candidates == 0 then
+        if typeName then
+            Say(string.format("内置数据中没有「%s」的训练师坐标。", typeName))
+        else
+            Say("内置数据中没有训练师坐标。")
+        end
         return
     end
 
-    local trainers = nil
-    if type(Craft.Trainers) == "table" then
-        trainers = Craft.Trainers[typeName]
-    end
-    if type(trainers) ~= "table" or #trainers == 0 then
-        Say(string.format("内置数据中没有「%s」的训练师坐标。", typeName))
-        return
-    end
-
+    local total = #candidates
     local currentMap = GetCurrentMapID()
+
+    if not showAll then
+        if not currentMap then
+            Say("无法获取玩家当前地图。用 /wjw craft trainer all 查看全部训练师。")
+            return
+        end
+        candidates = FilterByCurrentMap(candidates, currentMap)
+        if #candidates == 0 then
+            if typeName then
+                Say(string.format("当前地图没有查到「%s」训练师。用 /wjw craft trainer %s all 查看全部 %d 条。",
+                    typeName, typeName, total))
+            else
+                Say(string.format("当前地图没有查到训练师。用 /wjw craft trainer all 查看全部 %d 条。", total))
+            end
+            return
+        end
+    end
+
+    local header
+    if typeName then
+        header = showAll
+            and string.format("「%s」训练师（共 %d 条）：", typeName, #candidates)
+            or string.format("「%s」训练师（当前地图，共 %d 条）：", typeName, #candidates)
+    else
+        header = showAll
+            and string.format("全部训练师（共 %d 条）：", #candidates)
+            or string.format("当前地图的训练师（共 %d 条）：", #candidates)
+    end
+    Say(header)
+
     local playerX, playerY
     if currentMap then
         playerX, playerY = GetPlayerWorldPos(currentMap)
     end
 
-    Say(string.format("「%s」训练师（共 %d 条）：", typeName, #trainers))
-
+    local showTypeName = (typeName == nil)
     local shown = 0
-    for _, t in ipairs(trainers) do
+    for _, c in ipairs(candidates) do
         if shown >= MAX_TRAINERS then
             break
         end
 
-        local ui = nil
-        if type(Craft.TrainerZoneMap) == "table" then
-            ui = Craft.TrainerZoneMap[t.zone]
-        end
-        local mapName = GetMapName(ui) or ("地图 " .. tostring(t.zone))
+        local t = c.trainer
+        local mapName = GetMapName(c.ui) or ("地图 " .. tostring(t.zone))
 
         local line = nil
-        if ui and currentMap and ui == currentMap and playerX and playerY then
-            local tx, ty = MapPosToWorld(ui, (tonumber(t.x) or 0) / 100, (tonumber(t.y) or 0) / 100)
+        if c.ui and currentMap and c.ui == currentMap and playerX and playerY then
+            local tx, ty = MapPosToWorld(c.ui, (tonumber(t.x) or 0) / 100, (tonumber(t.y) or 0) / 100)
             if tx and ty then
                 local distance, direction = DescribeRelative(playerX, playerY, tx, ty)
                 line = string.format("%s（距离 %d 码，%s方向）",
@@ -408,13 +508,16 @@ local function ShowTrainers(professionName)
             line = string.format("%s · %s · 坐标 (%.2f, %.2f)",
                 tostring(t.name), mapName, tonumber(t.x) or 0, tonumber(t.y) or 0)
         end
+        if showTypeName then
+            line = c.typeName .. " · " .. line
+        end
 
         Say(line)
         shown = shown + 1
     end
 
-    if #trainers > shown then
-        Say(string.format("还有 %d 条，可用 /wjw craft trainer 分批查看。", #trainers - shown))
+    if #candidates > shown then
+        Say(string.format("还有 %d 条未显示。", #candidates - shown))
     end
 end
 
@@ -429,7 +532,7 @@ local function ShowHelp()
     Say("  /wjw craft unskip <名称>        从两个跳过名单中移除")
     Say("  /wjw craft list                 查看两个跳过名单")
     Say("  /wjw craft reset                清空跳过名单与目标等级")
-    Say("  /wjw craft trainer [类型]       查询训练师位置（同地图显示距离与方向）")
+    Say("  /wjw craft trainer [类型] [all]  查询训练师（默认只列当前地图，加 all 列全部）")
     Say("  /wjw craft help                 显示本帮助")
     Say("说明：读配方前需先打开过该专业的制作窗口；等级与涨点概率均为估算。")
 end
@@ -481,7 +584,7 @@ function Craft.Command(msg)
         Say("已清空跳过名单与目标等级。")
 
     elseif cmd == "trainer" then
-        ShowTrainers((Trim(rest) ~= "") and Trim(rest) or nil)
+        ShowTrainers(rest)
 
     elseif cmd == "help" or cmd == "?" then
         ShowHelp()

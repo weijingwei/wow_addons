@@ -93,7 +93,7 @@
 | `/wjw craft unskip <名称>` | 从两个跳过名单中移除 |
 | `/wjw craft list` | 查看两个跳过名单 |
 | `/wjw craft reset` | 清空跳过名单与目标等级 |
-| `/wjw craft trainer [类型]` | 查询训练师位置（同地图显示距离与方向） |
+| `/wjw craft trainer [类型] [all]` | 查询训练师位置（默认只列当前地图，`all` 列出全部地图；同地图显示距离与方向） |
 | `/wjw craft help` | 显示专业技能帮助 |
 
 总帮助：
