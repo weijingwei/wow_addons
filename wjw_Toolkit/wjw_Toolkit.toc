@@ -2,7 +2,7 @@
 ## Title: wjw_工具箱
 ## Notes: 任务寻路 + 自动卖垃圾 + 专业技能升级规划。命令统一入口：/wjw
 ## Author: wjw
-## Version: 1.1.0
+## Version: 1.2.0
 ## SavedVariables: QuestPathDB, WuXianAutoSellDB, wjwCraftDB
 
 PathCore.lua
@@ -16,3 +16,5 @@ CraftTrainerData.lua
 CraftCore.lua
 CraftCommand.lua
 CraftAutoSelect.lua
+CraftOptions.lua
+CraftPanel.lua
