@@ -268,7 +268,7 @@ local function AtlasExists(atlasName)
     return info ~= nil
 end
 
--- 按 MARKER_ATLASES 的顺序尝试图标图集，任一成功返回 true
+-- 按 MARKER_ATLASES 的顺序尝试图标图集，任一成功返回 true 和实际用上的图集名
 local function ApplyMarkerAtlas(texture)
     if type(texture.SetAtlas) ~= "function" then
         return false
@@ -280,11 +280,11 @@ local function ApplyMarkerAtlas(texture)
             if ok then
                 -- 图集名无效时 SetAtlas 可能静默无效，能回读就核对一遍
                 if type(texture.GetAtlas) ~= "function" then
-                    return true
+                    return true, atlasName
                 end
                 local okGet, current = pcall(texture.GetAtlas, texture)
                 if okGet and current == atlasName then
-                    return true
+                    return true, atlasName
                 end
             end
         end
@@ -305,13 +305,17 @@ local function ApplySolidColor(texture, red, green, blue, alpha)
 end
 
 -- 配置一个标记贴图：allowedAtlas 为 true 时优先用图标图集（尺寸 atlasSize），
--- 取不到图集则退回纯色方块（尺寸 size）。第二个返回值表示是否真的用上了图集。
+-- 取不到图集则退回纯色方块（尺寸 size）。
+-- 第二个返回值表示是否真的用上了图集，第三个是实际用上的图集名。
 local function ConfigureMarkerTexture(texture, size, subLevel, red, green, blue, alpha, allowedAtlas, atlasSize)
     if not texture then
         return false
     end
-    local ok, usedAtlas = pcall(function()
-        local useAtlas = allowedAtlas == true and ApplyMarkerAtlas(texture)
+    local ok, usedAtlas, atlasName = pcall(function()
+        local useAtlas, name
+        if allowedAtlas == true then
+            useAtlas, name = ApplyMarkerAtlas(texture)
+        end
         if useAtlas then
             local iconSize = atlasSize or size
             texture:SetSize(iconSize, iconSize)
@@ -321,12 +325,12 @@ local function ConfigureMarkerTexture(texture, size, subLevel, red, green, blue,
         end
         texture:SetDrawLayer("OVERLAY", subLevel)
         texture:Hide()
-        return useAtlas
+        return useAtlas, name
     end)
     if not ok then
         return false
     end
-    return true, usedAtlas == true
+    return true, usedAtlas == true, atlasName
 end
 
 ---------------------------------------------------------------- 小地图标记
@@ -346,15 +350,24 @@ local function EnsureMinimapMarkers()
     local okBorder = border
         and ConfigureMarkerTexture(border, MARKER_BORDER_SIZE, 0, BORDER_R, BORDER_G, BORDER_B, BORDER_ALPHA)
     -- 图集可用时只画一枚 18×18 图标；否则退回 14×14 深色托底 + 10×10 金色圆点
-    local okFill, usedAtlas = fill
-        and ConfigureMarkerTexture(fill, MARKER_SIZE, 1, MARKER_R, MARKER_G, MARKER_B, MARKER_ALPHA,
-            true, ATLAS_MARKER_SIZE)
+    -- 注意：不能写成 `fill and ConfigureMarkerTexture(...)`——Lua 5.1 的 and 会把右侧调用的
+    -- 多返回值截成一个，usedAtlas 恒为 nil，托底方块就不会被隐藏。
+    local okFill, usedAtlas, atlasName
+    if fill then
+        okFill, usedAtlas, atlasName = ConfigureMarkerTexture(fill, MARKER_SIZE, 1,
+            MARKER_R, MARKER_G, MARKER_B, MARKER_ALPHA, true, ATLAS_MARKER_SIZE)
+    end
     if not okBorder or not okFill then
         if border then pcall(border.Hide, border) end
         if fill then pcall(fill.Hide, fill) end
         return nil
     end
     minimapBorder, minimapFill, minimapUsesAtlas = border, fill, usedAtlas == true
+    if minimapUsesAtlas then
+        DebugPrint("marker atlas: " .. tostring(atlasName))
+    else
+        DebugPrint("marker atlas: none（纯色回退）")
+    end
     return minimapBorder, minimapFill, minimapUsesAtlas
 end
 
@@ -575,9 +588,13 @@ local function EnsureWorldMarkers()
     local fill = CreateMarkerTexture(newFrame)
     local okBorder = border
         and ConfigureMarkerTexture(border, MARKER_BORDER_SIZE, 0, BORDER_R, BORDER_G, BORDER_B, BORDER_ALPHA)
-    local okFill, usedAtlas = fill
-        and ConfigureMarkerTexture(fill, MARKER_SIZE, 1, MARKER_R, MARKER_G, MARKER_B, MARKER_ALPHA,
-            true, ATLAS_MARKER_SIZE)
+    -- 同小地图：不能写成 `fill and ConfigureMarkerTexture(...)`，否则 usedAtlas 恒为 nil，
+    -- 托底方块会一直显示（Lua 5.1 的 and 截断右侧调用的多返回值）。
+    local okFill, usedAtlas, atlasName
+    if fill then
+        okFill, usedAtlas, atlasName = ConfigureMarkerTexture(fill, MARKER_SIZE, 1,
+            MARKER_R, MARKER_G, MARKER_B, MARKER_ALPHA, true, ATLAS_MARKER_SIZE)
+    end
     if not okBorder or not okFill then
         pcall(newFrame.Hide, newFrame)
         return nil
@@ -586,6 +603,11 @@ local function EnsureWorldMarkers()
     worldFrame, worldParent = newFrame, canvas
     worldBorder, worldFill = border, fill
     worldUsesAtlas = usedAtlas == true
+    if worldUsesAtlas then
+        DebugPrint("world marker atlas: " .. tostring(atlasName))
+    else
+        DebugPrint("world marker atlas: none（纯色回退）")
+    end
     return worldBorder, worldFill, canvas, worldUsesAtlas
 end
 
