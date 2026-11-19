@@ -433,10 +433,94 @@ local function FilterByCurrentMap(candidates, currentMap)
     return {}
 end
 
+-- skillLineID → 专业名：先查已学专业列表，再退回 C_TradeSkillUI
+local function GetProfessionNameBySkillLine(skillLineID)
+    if type(skillLineID) ~= "number" then
+        return nil
+    end
+    if type(Craft.GetProfessions) == "function" then
+        local ok, professions = pcall(Craft.GetProfessions)
+        if ok and type(professions) == "table" then
+            for _, profession in ipairs(professions) do
+                if type(profession) == "table" and profession.skillLineID == skillLineID
+                    and type(profession.name) == "string" and profession.name ~= "" then
+                    return profession.name
+                end
+            end
+        end
+    end
+    local UI = _G.C_TradeSkillUI
+    if type(UI) == "table" and type(UI.GetProfessionInfoBySkillLineID) == "function" then
+        local ok, info = pcall(UI.GetProfessionInfoBySkillLineID, skillLineID)
+        if ok and type(info) == "table" and type(info.professionName) == "string"
+            and info.professionName ~= "" then
+            return info.professionName
+        end
+    end
+    return nil
+end
+
+-- 专业名 → Craft.Trainers 的键。数据层键名有简称（如「炼金」「草药」），
+-- 而游戏读到的专业名可能是「炼金术」「草药学」，先精确匹配再做双向包含匹配。
+local function FindTrainerTypeKey(professionName)
+    local trainers = Craft.Trainers
+    if type(trainers) ~= "table" or type(professionName) ~= "string" or professionName == "" then
+        return nil
+    end
+    if type(trainers[professionName]) == "table" then
+        return professionName
+    end
+    local keys = {}
+    for key in pairs(trainers) do
+        if type(key) == "string" then
+            keys[#keys + 1] = key
+        end
+    end
+    table.sort(keys)
+    for _, key in ipairs(keys) do
+        if type(trainers[key]) == "table" and IsNameMatch(key, professionName) then
+            return key
+        end
+    end
+    return nil
+end
+
+-- 当前专业名：① 当前打开的专业窗口；② 上次规划过的专业。都读不到返回 nil。
+local function GetCurrentProfessionName()
+    if type(Craft.GetOpenProfession) == "function" then
+        local ok, skillLineID = pcall(Craft.GetOpenProfession)
+        if ok then
+            local name = GetProfessionNameBySkillLine(skillLineID)
+            if name then
+                return name
+            end
+        end
+    end
+    if db and type(db.lastProfession) == "string" and db.lastProfession ~= "" then
+        return db.lastProfession
+    end
+    return nil
+end
+
 local function ShowTrainers(args)
     if not db then EnsureDB() end
 
     local typeName, showAll = ParseTrainerArgs(args)
+    local queryCurrentProfession = false
+
+    -- 无类型名且未加 all：跟随当前专业；识别不到就提示用法，不退化成全部类型
+    if not typeName and not showAll then
+        local professionName = GetCurrentProfessionName()
+        if professionName then
+            typeName = FindTrainerTypeKey(professionName) or professionName
+        end
+        if not typeName then
+            Say("未识别当前专业。用法：/wjw craft trainer <专业名>，例如 /wjw craft trainer 工程学")
+            return
+        end
+        queryCurrentProfession = true
+    end
+
     local candidates = CollectTrainers(typeName)
 
     if #candidates == 0 then
@@ -468,43 +552,70 @@ local function ShowTrainers(args)
         end
     end
 
-    local header
-    if typeName then
-        header = showAll
-            and string.format("「%s」训练师（共 %d 条）：", typeName, #candidates)
-            or string.format("「%s」训练师（当前地图，共 %d 条）：", typeName, #candidates)
-    else
-        header = showAll
-            and string.format("全部训练师（共 %d 条）：", #candidates)
-            or string.format("当前地图的训练师（共 %d 条）：", #candidates)
-    end
-    Say(header)
-
     local playerX, playerY
     if currentMap then
         playerX, playerY = GetPlayerWorldPos(currentMap)
     end
 
-    local showTypeName = (typeName == nil)
-    local shown = 0
-    for _, c in ipairs(candidates) do
-        if shown >= MAX_TRAINERS then
-            break
-        end
-
+    -- 逐条算出与玩家的距离；算不出来时 distance 保持 nil，输出退回地图与坐标
+    local entries = {}
+    for index, c in ipairs(candidates) do
         local t = c.trainer
-        local mapName = GetMapName(c.ui) or ("地图 " .. tostring(t.zone))
-
-        local line = nil
+        local entry = { candidate = c, index = index }
         if c.ui and currentMap and c.ui == currentMap and playerX and playerY then
             local tx, ty = MapPosToWorld(c.ui, (tonumber(t.x) or 0) / 100, (tonumber(t.y) or 0) / 100)
             if tx and ty then
-                local distance, direction = DescribeRelative(playerX, playerY, tx, ty)
-                line = string.format("%s（距离 %d 码，%s方向）",
-                    tostring(t.name), math.floor(distance + 0.5), direction)
+                entry.distance, entry.direction = DescribeRelative(playerX, playerY, tx, ty)
             end
         end
-        if not line then
+        entries[#entries + 1] = entry
+    end
+
+    -- 当前地图的列表按距离由近到远排序；算不出距离的排在有距离的条目之后，
+    -- 距离相同或都算不出时保持数据原顺序（用 index 兜底，table.sort 本身不稳定）
+    if not showAll then
+        table.sort(entries, function(a, b)
+            if a.distance and b.distance then
+                if a.distance ~= b.distance then
+                    return a.distance < b.distance
+                end
+            elseif a.distance then
+                return true
+            elseif b.distance then
+                return false
+            end
+            return a.index < b.index
+        end)
+    end
+
+    local header
+    if queryCurrentProfession then
+        header = string.format("最近的「%s」训练师：", typeName)
+    elseif typeName then
+        header = showAll
+            and string.format("「%s」训练师（共 %d 条）：", typeName, #entries)
+            or string.format("当前地图的「%s」训练师（共 %d 条）：", typeName, #entries)
+    else
+        header = string.format("全部训练师（共 %d 条）：", #entries)
+    end
+    Say(header)
+
+    local limit = queryCurrentProfession and 1 or MAX_TRAINERS
+    local showTypeName = (typeName == nil)
+    local shown = 0
+    for _, entry in ipairs(entries) do
+        if shown >= limit then
+            break
+        end
+
+        local c = entry.candidate
+        local t = c.trainer
+        local line = nil
+        if entry.distance then
+            line = string.format("%s（距离 %d 码，%s方向）",
+                tostring(t.name), math.floor(entry.distance + 0.5), entry.direction)
+        else
+            local mapName = GetMapName(c.ui) or ("地图 " .. tostring(t.zone))
             line = string.format("%s · %s · 坐标 (%.2f, %.2f)",
                 tostring(t.name), mapName, tonumber(t.x) or 0, tonumber(t.y) or 0)
         end
@@ -516,8 +627,8 @@ local function ShowTrainers(args)
         shown = shown + 1
     end
 
-    if #candidates > shown then
-        Say(string.format("还有 %d 条未显示。", #candidates - shown))
+    if #entries > shown then
+        Say(string.format("还有 %d 条未显示。", #entries - shown))
     end
 end
 
@@ -532,7 +643,7 @@ local function ShowHelp()
     Say("  /wjw craft unskip <名称>        从两个跳过名单中移除")
     Say("  /wjw craft list                 查看两个跳过名单")
     Say("  /wjw craft reset                清空跳过名单与目标等级")
-    Say("  /wjw craft trainer [类型] [all]  查询训练师（默认只列当前地图，加 all 列全部）")
+    Say("  /wjw craft trainer [类型] [all]  查询训练师（默认当前专业最近的一个；类型列当前地图该类型；all 列全部）")
     Say("  /wjw craft help                 显示本帮助")
     Say("说明：读配方前需先打开过该专业的制作窗口；等级与涨点概率均为估算。")
 end
