@@ -56,7 +56,7 @@ local function Refresh()
     end
 
     if #entries > MAX_ROWS then
-        panel.moreText:SetText(string.format("还有 %d 项未显示，可用 /xsell list 在聊天框查看完整名单。",
+        panel.moreText:SetText(string.format("还有 %d 项未显示，可用 /wjw sell list 在聊天框查看完整名单。",
             #entries - MAX_ROWS))
         panel.moreText:Show()
     else
@@ -137,7 +137,7 @@ local function BuildPanel()
 
     local hint = panel:CreateFontString(nil, "ARTWORK", "GameFontDisableSmall")
     hint:SetPoint("TOPLEFT", panel, "TOPLEFT", 220, -201)
-    hint:SetText("用 /xsell add 把鼠标指向的物品加入名单")
+    hint:SetText("用 /wjw sell add 把鼠标指向的物品加入名单")
 
     for i = 1, MAX_ROWS do
         local fs = panel:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
@@ -202,7 +202,7 @@ local function BuildPanel()
 
     local footer = panel:CreateFontString(nil, "ARTWORK", "GameFontDisableSmall")
     footer:SetPoint("BOTTOMLEFT", panel, "BOTTOMLEFT", 200, 26)
-    footer:SetText("命令速查：/xsell toggle · /xsell add · /xsell remove · /xsell list · /xsell clear")
+    footer:SetText("命令速查：/wjw sell toggle · /wjw sell add · /wjw sell remove · /wjw sell list · /wjw sell clear")
 
     panel:SetScript("OnShow", Refresh)
 

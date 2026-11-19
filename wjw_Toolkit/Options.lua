@@ -58,7 +58,7 @@ local function BuildPanel()
     subtitle:SetWidth(PANEL_W - 40)
     subtitle:SetJustifyH("LEFT")
     subtitle:SetText("打开追踪的任务或选中任务时，自动在小地图、屏幕与世界地图上画出指向任务目的地的连线。"
-        .. "游戏没有给出任务点的任务不会画线。命令：/qp 查看当前目标与距离。")
+        .. "游戏没有给出任务点的任务不会画线。命令：/wjw qp 查看当前目标与距离。")
 
     panel.autoTrackCheck = CreateCheckButton(panel,
         "自动跟随追踪/选中的任务",

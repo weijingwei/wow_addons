@@ -6,7 +6,7 @@
         灰色（品质 0）物品；
       * 卖出结束后在聊天框提示本次卖出的件数与获得的金币；
       * 提供永不卖出名单，名单内的物品（即使品质为 0）永远不会被卖出；
-      * 命令：/xsell（开关）、/xsell add、/xsell list、/xsell clear 等。
+      * 命令：/wjw sell（开关）、/wjw sell add、/wjw sell list、/wjw sell clear 等。
 
     兼容：
       * 正式服（Retail）与怀旧服（Classic）通用；
@@ -403,7 +403,7 @@ end
 local function AddToBlacklist(itemID, link)
     if not db then return end
     if not itemID then
-        Print("请先把鼠标指向背包里的物品（或把它拾起到光标上），再输入 /xsell add。")
+        Print("请先把鼠标指向背包里的物品（或把它拾起到光标上），再输入 /wjw sell add。")
         return
     end
     if db.blacklist[itemID] then
@@ -466,7 +466,7 @@ local function RemoveFromBlacklist(arg)
     if arg == "" then
         itemID = ResolveTargetItemID()
         if not itemID then
-            Print("请把鼠标指向背包里的物品，或输入 /xsell remove <itemID|名字片段>。")
+            Print("请把鼠标指向背包里的物品，或输入 /wjw sell remove <itemID|名字片段>。")
             return
         end
     elseif tonumber(arg) then
@@ -498,15 +498,15 @@ end
 ---------------------------------------------------------------- 命令
 local function ShowHelp()
     Print("命令列表：")
-    Print("  /xsell                     开 / 关自动卖出（不带参数直接切换）")
-    Print("  /xsell on | off | toggle   开启 / 关闭 / 切换自动卖出")
-    Print("  /xsell status              查看当前开关状态与名单数量")
-    Print("  /xsell add                 把鼠标指向（或拾起到光标）的物品加入永不卖出名单")
-    Print("  /xsell remove [ID或名字]   从名单移除物品，不填参数则取光标上的物品")
-    Print("  /xsell list                查看永不卖出名单")
-    Print("  /xsell clear               清空永不卖出名单")
-    Print("  /xsell config              打开设置面板")
-    Print("  /xsell help                显示本帮助")
+    Print("  /wjw sell                     开 / 关自动卖出（不带参数直接切换）")
+    Print("  /wjw sell on | off | toggle   开启 / 关闭 / 切换自动卖出")
+    Print("  /wjw sell status              查看当前开关状态与名单数量")
+    Print("  /wjw sell add                 把鼠标指向（或拾起到光标）的物品加入永不卖出名单")
+    Print("  /wjw sell remove [ID或名字]   从名单移除物品，不填参数则取光标上的物品")
+    Print("  /wjw sell list                查看永不卖出名单")
+    Print("  /wjw sell clear               清空永不卖出名单")
+    Print("  /wjw sell config              打开设置面板")
+    Print("  /wjw sell help                显示本帮助")
     Print("说明：打开商人界面（会买卖的 NPC）时才会自动卖出。")
 end
 
@@ -525,8 +525,6 @@ local function SetEnabled(enabled, silent)
 end
 NS.SetEnabled = SetEnabled
 
-SLASH_WUXIANAUTOSELL1 = "/xsell"
-SLASH_WUXIANAUTOSELL2 = "/无限卖垃圾"
 local function SellCommand(msg)
     if not db then EnsureDB() end
 
@@ -564,7 +562,6 @@ local function SellCommand(msg)
 end
 
 NS.SellCommand = SellCommand
-SlashCmdList["WUXIANAUTOSELL"] = SellCommand
 
 ---------------------------------------------------------------- 命令总入口
 local function ShowWJWHelp()
@@ -581,7 +578,6 @@ local function ShowWJWHelp()
     Print("  /wjw sell on|off|status           开关状态")
     Print("  /wjw sell add|remove|list|clear   永不卖出名单")
     Print("  /wjw sell config                  打开卖垃圾设置面板")
-    Print("旧命令 /qp、/xsell 仍然可用。")
     Print("设置页：选项 → 插件 → wjw_工具箱 · 任务寻路 / wjw_工具箱 · 自动卖垃圾")
 end
 

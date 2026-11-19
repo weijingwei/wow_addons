@@ -800,7 +800,7 @@ local function HandleSlash(message)
 
 	if not command or command == "" then
 		if not QP.target then
-			Print("未设定目标。用法：/qp <x> <y>、/qp quest、/qp auto on|off、/qp quiet on|off、/qp debug")
+			Print("未设定目标。用法：/wjw qp <x> <y>、/wjw qp quest、/wjw qp auto on|off、/wjw qp quiet on|off、/wjw qp debug")
 			return
 		end
 		local distance, bearingOrError = QP.GetTargetRelative()
@@ -837,7 +837,7 @@ local function HandleSlash(message)
 		elseif first == "off" then
 			QP.SetAutoTracking(false)
 		else
-			Print("自动追踪当前" .. (QP.autoTrack and "开启" or "关闭") .. "。用法：/qp auto on|off")
+			Print("自动追踪当前" .. (QP.autoTrack and "开启" or "关闭") .. "。用法：/wjw qp auto on|off")
 		end
 		return
 	end
@@ -853,7 +853,7 @@ local function HandleSlash(message)
 			QP.SaveSettings()
 			Print("静默模式已关闭")
 		else
-			Print("静默模式当前" .. (QP.quiet and "开启" or "关闭") .. "。用法：/qp quiet on|off")
+			Print("静默模式当前" .. (QP.quiet and "开启" or "关闭") .. "。用法：/wjw qp quiet on|off")
 		end
 		return
 	end
@@ -868,7 +868,7 @@ local function HandleSlash(message)
 			QP.SaveSettings()
 			Print("屏幕箭头已关闭")
 		else
-			Print("屏幕箭头当前" .. (QP.arrowEnabled and "开启" or "关闭") .. "。用法：/qp arrow on|off")
+			Print("屏幕箭头当前" .. (QP.arrowEnabled and "开启" or "关闭") .. "。用法：/wjw qp arrow on|off")
 		end
 		return
 	end
@@ -876,7 +876,7 @@ local function HandleSlash(message)
 	local x = tonumber(command)
 	local y = tonumber(first)
 	if not x or not y then
-		Print("参数无效。用法：/qp <x> <y>（0-1 小数或 0-100 百分数）、/qp quest、/qp auto on|off、/qp quiet on|off、/qp clear、/qp arrow on|off、/qp debug")
+		Print("参数无效。用法：/wjw qp <x> <y>（0-1 小数或 0-100 百分数）、/wjw qp quest、/wjw qp auto on|off、/wjw qp quiet on|off、/wjw qp clear、/wjw qp arrow on|off、/wjw qp debug")
 		return
 	end
 
@@ -899,6 +899,4 @@ local function HandleSlash(message)
 	Print(string.format("目标已设定：%s %.1f, %.1f", info and info.name or tostring(mapID), x * 100, y * 100))
 end
 
-SLASH_QUESTPATH1 = "/qp"
-SlashCmdList["QUESTPATH"] = HandleSlash
 QuestPath.HandleSlash = HandleSlash

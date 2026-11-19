@@ -38,16 +38,16 @@
 | `PathMap.lua` | 寻路：坐标换算（地图归一化 ↔ 世界坐标、距离、方位角） |
 | `PathOverlay.lua` | 寻路：绘制小地图/世界地图虚线、屏幕箭头 |
 | `PathMain.lua` | 寻路：事件注册、0.1 秒刷新节流、自动追踪轮询 |
-| `SellCore.lua` | 卖垃圾：商人事件、背包扫描、出售流程、`/xsell` 与 `/wjw` 命令、存档 |
+| `SellCore.lua` | 卖垃圾：商人事件、背包扫描、出售流程、`/wjw sell` 命令、存档 |
 | `SellOptions.lua` | 卖垃圾：设置面板（永不卖出名单） |
 | `Options.lua` | 寻路设置页（自动跟随 / 屏幕箭头 / 静默模式三个开关） |
 | `wjw_Toolkit.toc` | Interface 16001、SavedVariables: QuestPathDB, WuXianAutoSellDB、加载顺序 |
 
 ## 命令
 
-一级入口统一为 `/wjw`：`/wjw qp <参数>` 等价 `/qp <参数>`，`/wjw sell <参数>` 等价 `/xsell <参数>`。
+一级入口统一为 `/wjw`：`/wjw qp <参数>` 与 `/wjw sell <参数>`；**旧的 `/qp`、`/xsell` 已移除**。
 
-寻路 `/wjw qp ...`（别名 `/qp ...`）：
+寻路（`/wjw qp ...`）：
 
 | 命令 | 说明 |
 |---|---|
@@ -60,7 +60,7 @@
 | `/wjw qp quiet on\|off` | 静默模式（自动过程提示不再刷屏） |
 | `/wjw qp debug` | 打印目标解析链路、坐标、绘制层状态（排障首选） |
 
-自动卖垃圾 `/wjw sell ...`（别名 `/xsell ...`、`/无限卖垃圾`）：
+自动卖垃圾（`/wjw sell ...`）：
 
 | 命令 | 说明 |
 |---|---|
@@ -119,6 +119,6 @@
 - 改完 `/reload` 生效；新增插件才需要退回角色选择界面重新扫描。
 - 本机没有 Lua 解释器，交付前必须做静态自检：`end` 配对、UTF-8 无 BOM、API 存在性核对。
 - 新用到的 API 必须先在 `warcraft.wiki.gg` 或 Gethe/wow-ui-source（`forever` 分支）核实。
-- 排障三步：`/console scriptErrors 1` → `/reload` → `/qp debug`。
+- 排障三步：`/console scriptErrors 1` → `/reload` → `/wjw qp debug`。
 - git 提交不得添加 Co-Authored-By 签名。
 - `legacy/` 内文件不得修改，除非要做回退。
