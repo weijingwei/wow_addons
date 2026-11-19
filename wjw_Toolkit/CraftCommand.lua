@@ -627,7 +627,8 @@ local function ShowTrainers(args)
         shown = shown + 1
     end
 
-    if #entries > shown then
+    -- 默认路径只给最近的一条，不再追加「还有 N 条未显示」；显式列类型时保留截断提示
+    if not queryCurrentProfession and #entries > shown then
         Say(string.format("还有 %d 条未显示。", #entries - shown))
     end
 end
