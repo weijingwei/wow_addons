@@ -243,16 +243,26 @@ local function EnsureRowWidgets(row)
     pcall(mark.SetColorTexture, mark,
         HIGHLIGHT_R, HIGHLIGHT_G, HIGHLIGHT_B, HIGHLIGHT_ALPHA)
 
-    -- 次数文字位置：行内自带 Count（可制作数）时贴在它左边，避免两个数字叠在一起；
-    -- Count 不存在时退回行右边缘
+    -- 次数文字：固定贴行右端并右对齐。
+    -- 不再跟随行内 Count 控件：该控件实际位于行中部，跟随它会把「×N」压到配方名中间。
     if type(count.ClearAllPoints) == "function" then
         pcall(count.ClearAllPoints, count)
     end
-    local rowCount = row.Count
-    if type(rowCount) == "table" and type(rowCount.GetPoint) == "function" then
-        pcall(count.SetPoint, count, "RIGHT", rowCount, "LEFT", -4, 0)
-    else
-        pcall(count.SetPoint, count, "RIGHT", row, "RIGHT", -6, 0)
+    if type(count.SetPoint) == "function" then
+        pcall(count.SetPoint, count, "RIGHT", row, "RIGHT", -4, 0)
+    end
+    if type(count.SetWidth) == "function" then
+        pcall(count.SetWidth, count, 48)
+    end
+    if type(count.SetJustifyH) == "function" then
+        pcall(count.SetJustifyH, count, "RIGHT")
+    end
+    -- 黑色描边：文字压在金色高亮条上仍然清晰
+    if type(count.SetShadowColor) == "function" then
+        pcall(count.SetShadowColor, count, 0, 0, 0, 1)
+    end
+    if type(count.SetShadowOffset) == "function" then
+        pcall(count.SetShadowOffset, count, 1, -1)
     end
     pcall(count.SetTextColor, count, HIGHLIGHT_R, HIGHLIGHT_G, HIGHLIGHT_B)
 

@@ -23,7 +23,7 @@ end
 
 ---------------------------------------------------------------- 常量与状态
 local PANEL_W  = 620
-local PANEL_H  = 560
+local PANEL_H  = 590
 local MAX_ROWS = 8      -- 每个名单最多在面板里显示的行数
 local ROW_HEIGHT = 17
 local COL_W    = 286    -- 左右两列名单各自的宽度
@@ -134,6 +134,18 @@ local function GetHighlight()
     return highlight
 end
 
+-- 训练师地图标记接口（CraftTrainerMarker.lua）存在且导出齐全时才可用
+local function GetTrainerMarker()
+    local marker = Craft.TrainerMarker
+    if type(marker) ~= "table" then
+        return nil
+    end
+    if type(marker.SetEnabled) ~= "function" or type(marker.IsEnabled) ~= "function" then
+        return nil
+    end
+    return marker
+end
+
 ---------------------------------------------------------------- 面板刷新
 local function RefreshProfessions()
     if not panel or not panel.profText then return end
@@ -238,6 +250,17 @@ local function RefreshHighlight()
     panel.highlightCheck:SetChecked(ok and enabled and true or false)
 end
 
+local function RefreshTrainerMarker()
+    if not panel or not panel.trainerMarkerCheck then return end
+    local marker = GetTrainerMarker()
+    if not marker then
+        panel.trainerMarkerCheck:SetChecked(false)
+        return
+    end
+    local ok, enabled = pcall(marker.IsEnabled)
+    panel.trainerMarkerCheck:SetChecked(ok and enabled and true or false)
+end
+
 -- 面板显示时刷新全部动态内容
 local function Refresh()
     RefreshProfessions()
@@ -246,6 +269,7 @@ local function Refresh()
     RefreshList("recipes")
     RefreshAutoSelect()
     RefreshHighlight()
+    RefreshTrainerMarker()
 end
 
 ---------------------------------------------------------------- 名单操作
@@ -447,6 +471,22 @@ local function OnHighlightClick(checkButton)
     Say("配方行内高亮已" .. (enabled and "开启" or "关闭") .. "。")
 end
 
+local function OnTrainerMarkerClick(checkButton)
+    local marker = GetTrainerMarker()
+    if not marker then
+        return
+    end
+
+    local enabled = checkButton:GetChecked() and true or false
+    local ok = pcall(marker.SetEnabled, enabled)
+    if not ok then
+        checkButton:SetChecked(not enabled)
+        Say("切换「在地图上标记最近的专业训练师」开关失败。")
+        return
+    end
+    Say("训练师地图标记已" .. (enabled and "开启" or "关闭") .. "。")
+end
+
 ---------------------------------------------------------------- 界面构建
 local function CreateDivider(parent, y)
     local line = parent:CreateTexture(nil, "ARTWORK")
@@ -639,15 +679,26 @@ local function BuildPanel()
         panel.highlightCheck:Disable()
     end
 
-    CreateDivider(panel, -256)
+    -- 在地图上标记最近的专业训练师
+    local marker = GetTrainerMarker()
+    panel.trainerMarkerCheck = CreateCheckButton(panel,
+        marker and "在地图上标记最近的专业训练师"
+            or "在地图上标记最近的专业训练师（不可用）",
+        16, -254,
+        OnTrainerMarkerClick)
+    if not marker then
+        panel.trainerMarkerCheck:Disable()
+    end
+
+    CreateDivider(panel, -286)
 
     -- 跳过名单
     local skipLabel = panel:CreateFontString(nil, "ARTWORK", "GameFontNormal")
-    skipLabel:SetPoint("TOPLEFT", panel, "TOPLEFT", 16, -266)
+    skipLabel:SetPoint("TOPLEFT", panel, "TOPLEFT", 16, -296)
     skipLabel:SetText("跳过名单（规划时排除的材料与配方）")
 
-    BuildListColumn("materials", 16, -296)
-    BuildListColumn("recipes", 318, -296)
+    BuildListColumn("materials", 16, -326)
+    BuildListColumn("recipes", 318, -326)
 
     -- 底部按钮
     local startButton = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
