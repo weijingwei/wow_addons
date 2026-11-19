@@ -1,0 +1,14 @@
+## Interface: 16001
+## Title: wjw_工具箱
+## Notes: 任务寻路 + 自动卖垃圾。命令：/qp（寻路）、/xsell（卖垃圾）。
+## Author: wjw
+## Version: 1.0.0
+## SavedVariables: QuestPathDB, WuXianAutoSellDB
+
+PathCore.lua
+PathMap.lua
+PathOverlay.lua
+PathMain.lua
+SellCore.lua
+SellOptions.lua
+Options.lua
