@@ -668,7 +668,7 @@ local function ShowHelp()
     Say("  /wjw craft unskip <名称>        从两个跳过名单中移除")
     Say("  /wjw craft list                 查看两个跳过名单")
     Say("  /wjw craft reset                清空跳过名单与目标等级")
-    Say("  /wjw craft trainer [类型] [all]  查询训练师（默认当前专业最近的一个；类型列当前地图该类型；all 列全部）")
+    Say("  /wjw craft trainer [类型] [all]  查询训练师（短写 /wjw c t；默认当前专业最近的一个；类型列当前地图该类型；all 列全部）")
     Say("  /wjw craft help                 显示本帮助")
     Say("说明：读配方前需先打开过该专业的制作窗口；等级与涨点概率均为估算。")
 end
@@ -719,7 +719,7 @@ function Craft.Command(msg)
         db.targetLevel = nil
         Say("已清空跳过名单与目标等级。")
 
-    elseif cmd == "trainer" then
+    elseif cmd == "trainer" or cmd == "t" then
         ShowTrainers(rest)
 
     elseif cmd == "help" or cmd == "?" then

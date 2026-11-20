@@ -22,6 +22,8 @@
 
 ## 命令速查
 
+短写别名：`s` = `sell`、`c` = `craft`、`t` = `trainer`（即 `/wjw s ...` 等同 `/wjw sell ...`、`/wjw c t ...` 等同 `/wjw craft trainer ...`），长短写法等价。
+
 | 命令 | 说明 |
 |---|---|
 | `/wjw` | 总入口，列出全部命令与设置页位置；也可直接用 `/wjw qp`、`/wjw sell` |

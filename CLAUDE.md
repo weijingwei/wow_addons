@@ -54,6 +54,8 @@
 
 一级入口统一为 `/wjw`：`/wjw qp <参数>` 与 `/wjw sell <参数>`；**旧的 `/qp`、`/xsell` 已移除**。
 
+短写别名：`s` = `sell`、`c` = `craft`、`t` = `trainer`（即 `/wjw s ...` 等同 `/wjw sell ...`、`/wjw c t ...` 等同 `/wjw craft trainer ...`），长短写法等价。
+
 寻路（`/wjw qp ...`）：
 
 | 命令 | 说明 |

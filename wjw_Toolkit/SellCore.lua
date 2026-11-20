@@ -564,6 +564,7 @@ NS.SellCommand = SellCommand
 ---------------------------------------------------------------- 命令总入口
 local function ShowWJWHelp()
     Print("wjw_工具箱 · 用法")
+    Print("  短写：/wjw s = sell、/wjw c = craft、/wjw c t = craft trainer")
     Print("  /wjw qp                           任务寻路：查看当前目标与距离")
     Print("  /wjw qp <x> <y>                   按地图百分比设定目标（0-1 或 0-100）")
     Print("  /wjw qp quest                     用当前选中/追踪的任务设定目标")
@@ -572,17 +573,17 @@ local function ShowWJWHelp()
     Print("  /wjw qp arrow on|off              屏幕箭头开关")
     Print("  /wjw qp quiet on|off              静默模式")
     Print("  /wjw qp debug                     打印排障信息")
-    Print("  /wjw sell                         自动卖垃圾开/关")
+    Print("  /wjw sell                         自动卖垃圾开/关（短写 /wjw s）")
     Print("  /wjw sell on|off|status           开关状态")
     Print("  /wjw sell add|remove|list|clear   永不卖出名单")
     Print("  /wjw sell config                  打开卖垃圾设置面板")
-    Print("  /wjw craft                        专业技能升级规划")
+    Print("  /wjw craft                        专业技能升级规划（短写 /wjw c）")
     Print("  /wjw craft <目标等级>             规划到指定等级")
     Print("  /wjw craft <专业名> [目标等级]     指定专业规划")
     Print("  /wjw craft skip <材料名>          跳过某材料")
     Print("  /wjw craft skiprecipe <配方名>    跳过某配方")
     Print("  /wjw craft list|reset             查看/清空跳过名单")
-    Print("  /wjw craft trainer [专业名]       训练师位置")
+    Print("  /wjw craft trainer [专业名]       训练师位置（短写 /wjw c t）")
     Print("设置页：选项 → 插件 → wjw_工具箱 · 任务寻路 / wjw_工具箱 · 自动卖垃圾 / wjw_工具箱 · 专业技能")
 end
 
@@ -596,9 +597,9 @@ SlashCmdList["WJW"] = function(msg)
         else
             Print("任务寻路模块未加载，请检查 PathCore.lua。")
         end
-    elseif cmd == "sell" or cmd == "xsell" then
+    elseif cmd == "sell" or cmd == "xsell" or cmd == "s" then
         SellCommand(rest)
-    elseif cmd == "craft" then
+    elseif cmd == "craft" or cmd == "c" then
         if NS.Craft and NS.Craft.Command then
             NS.Craft.Command(rest)
         else
