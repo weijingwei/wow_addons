@@ -331,7 +331,8 @@ end
 -- 训练师标记 / 查询使用的类型（Craft.Trainers 的键），命令层与标记层统一走这里：
 -- ① 专业窗口可见时的专业（GetVisibleProfession；窗口真的开着才算）——最高优先，
 --    用户此刻打开哪个专业窗口就以哪个为准，不被之前记住的类型压住；
--- ② 显式指定过的类型（wjwCraftDB.trainerType）；
+-- ② wjwCraftDB.trainerType = 当前要在地图上标注的训练师类型（专业名或职业名），
+--    由 /wjw craft trainer 查询时写入；
 -- ③ 上次规划过的专业（wjwCraftDB.lastProfession）。
 -- 都取不到返回 nil——不再猜测"第一个已学专业"，避免标错类型。
 -- 第二个返回值表示来源："visible" / "trainerType" / "lastProfession"，全落空为 nil；

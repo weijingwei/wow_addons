@@ -542,7 +542,8 @@ local function ShowTrainers(args)
                 end
             end
         else
-            -- 专业窗口没开：查本职业训练师。职业不是专业，不写 db.trainerType，避免污染地图标记的判定
+            -- 专业窗口没开：查本职业训练师。查到后把类型写入存档，
+            -- 地图标记（Craft.GetCurrentTrainerType 读取 wjwCraftDB.trainerType）随之标注该职业的训练师
             local className = UnitClass("player")
             local key = type(Craft.FindTrainerTypeKey) == "function"
                 and Craft.FindTrainerTypeKey(className)
@@ -554,6 +555,7 @@ local function ShowTrainers(args)
                 return
             end
             typeName = key
+            db.trainerType = key
             queryCurrentProfession = true
         end
     elseif typeName then
