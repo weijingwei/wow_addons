@@ -613,22 +613,63 @@ end
 ---------------------------------------------------------------- 银行数量快照（按角色隔离）
 -- 银行没打开过时，客户端的银行数据可能尚未加载，C_Item.GetItemCount 的
 -- 银行部分会偏小甚至为 0（TSM 更新日志有同类记录）。因此每次打开银行时
--- 扫描一次，把物品数量写进存档 wjwItemDB，按「服务器|角色」分开存；
+-- 扫描一次，把物品数量写进存档 wjwItemDB，按角色分开存；
 -- 本次会话没扫过时，提示框改用该角色上次记录的数量并标注「上次记录」。
+--
+-- 角色键：优先 UnitGUID("player")（形如 Player-XXXX-XXXXXXXX，稳定且天然
+-- 按角色隔离）；取不到时才退回旧的「服务器|角色」拼接（实测拼接结果长度
+-- 与存档里的键对不上）；都取不到用 "unknown"。
 local bankScannedThisSession = false
+local legacyBankMigrationTried = false
 
-local function BankCharacterKey()
+local function PlayerGUID()
+    local ok, guid = pcall(UnitGUID, "player")
+    if ok and type(guid) == "string" and guid ~= "" then return guid end
+    return nil
+end
+
+local function LegacyCharacterKey()
     local okName, name = pcall(UnitName, "player")
     local okRealm, realm = pcall(GetRealmName)
-    if not okName or type(name) ~= "string" or name == "" then name = "unknown" end
-    if not okRealm or type(realm) ~= "string" or realm == "" then realm = "unknown" end
-    return realm .. "|" .. name
+    if not okName or type(name) ~= "string" or name == "" then name = nil end
+    if not okRealm or type(realm) ~= "string" or realm == "" then realm = nil end
+    if not name and not realm then return "unknown" end
+    return (realm or "unknown") .. "|" .. (name or "unknown")
+end
+
+local function BankCharacterKey()
+    return PlayerGUID() or LegacyCharacterKey()
 end
 
 local function EnsureItemDB()
     if type(wjwItemDB) ~= "table" then wjwItemDB = {} end
     if type(wjwItemDB.characters) ~= "table" then wjwItemDB.characters = {} end
     return wjwItemDB
+end
+
+-- 旧版用「服务器|角色」做键，新键（GUID）下没有记录时把旧记录迁过来：
+-- 只挑 time 最大的那一条整体搬到新键下，其余旧记录保留不动（避免误删
+-- 别的角色）。遍历期间只收集，遍历结束后才删除键（Lua 遍历中删除是未定义行为）。
+-- 新键本身含 "|" 说明 GUID 不可用、还在走旧拼接，此时不迁移。
+local function MigrateLegacyRecord(newKey)
+    if type(newKey) ~= "string" or newKey:find("|", 1, true) then return nil end
+    local chars = wjwItemDB and wjwItemDB.characters
+    if type(chars) ~= "table" then return nil end
+    local bestKey, bestTime
+    for k, v in pairs(chars) do
+        if type(k) == "string" and k ~= newKey and k:find("|", 1, true)
+            and type(v) == "table" and type(v.bank) == "table" then
+            local t = tonumber(v.time) or 0
+            if bestTime == nil or t > bestTime then
+                bestKey, bestTime = k, t
+            end
+        end
+    end
+    if not bestKey then return nil end
+    local src = chars[bestKey]
+    chars[newKey] = src
+    chars[bestKey] = nil
+    return src
 end
 
 local function GetBankRecord(create)
@@ -643,6 +684,16 @@ local function GetBankRecord(create)
     local key = BankCharacterKey()
     local record = wjwItemDB.characters[key]
     if type(record) == "table" then return record end
+
+    -- 一次性迁移旧式键的记录；每会话最多尝试一次，失败也不影响读取
+    if not legacyBankMigrationTried and not key:find("|", 1, true) then
+        local ok, migrated = pcall(MigrateLegacyRecord, key)
+        if ok then
+            legacyBankMigrationTried = true
+            if type(migrated) == "table" then return migrated end
+        end
+    end
+
     if not create then return nil end
     record = {}
     wjwItemDB.characters[key] = record
