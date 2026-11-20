@@ -453,8 +453,9 @@ local function ToTrainerTypeKey(name)
     return name
 end
 
--- 当前训练师类型（Craft.Trainers 的键）；判定链统一在 CraftCore.lua 的 Craft.GetCurrentTrainerType：
--- ① 显式指定过的类型；② 专业窗口可见时的专业；③ 上次规划过的专业。都取不到返回 nil。
+-- 当前训练师类型（Craft.Trainers 的键）与来源；判定链统一在 CraftCore.lua 的 Craft.GetCurrentTrainerType：
+-- ① 专业窗口可见时的专业；② 显式指定过的类型；③ 上次规划过的专业。都取不到返回 nil。
+-- 第二返回值为来源："visible" / "trainerType" / "lastProfession"。
 local function GetCurrentProfessionName()
     if type(Craft.GetCurrentTrainerType) == "function" then
         return Craft.GetCurrentTrainerType()
@@ -519,12 +520,21 @@ local function ShowTrainers(args)
 
     -- 无类型名且未加 all：按统一判定链跟随当前类型；识别不到就提示用法，不退化成全部类型
     if not typeName and not showAll then
-        typeName = GetCurrentProfessionName()
+        local source
+        typeName, source = GetCurrentProfessionName()
         if not typeName then
             Say("未识别当前专业。用法：/wjw craft trainer <专业名>，例如 /wjw craft trainer 工程学")
             return
         end
         queryCurrentProfession = true
+        -- 来源是当前打开的专业窗口时顺手记住（EnsureDB 已保证 wjwCraftDB 是表）：
+        -- 关掉窗口后标记仍跟随这个专业，不会跳回之前记住的类型
+        if source == "visible" and type(Craft.FindTrainerTypeKey) == "function" then
+            local key = Craft.FindTrainerTypeKey(typeName)
+            if key then
+                db.trainerType = key
+            end
+        end
     elseif typeName then
         -- 显式给出的类型先规范成数据键（如「工程学」→「工程」），与标记层口径一致
         explicitTypeName = true

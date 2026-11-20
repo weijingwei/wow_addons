@@ -329,27 +329,31 @@ local function GetProfessionNameBySkillLineID(skillLineID)
 end
 
 -- 训练师标记 / 查询使用的类型（Craft.Trainers 的键），命令层与标记层统一走这里：
--- ① 显式指定过的类型（wjwCraftDB.trainerType）；
--- ② 专业窗口可见时的专业（GetVisibleProfession）；
+-- ① 专业窗口可见时的专业（GetVisibleProfession；窗口真的开着才算）——最高优先，
+--    用户此刻打开哪个专业窗口就以哪个为准，不被之前记住的类型压住；
+-- ② 显式指定过的类型（wjwCraftDB.trainerType）；
 -- ③ 上次规划过的专业（wjwCraftDB.lastProfession）。
 -- 都取不到返回 nil——不再猜测"第一个已学专业"，避免标错类型。
+-- 第二个返回值表示来源："visible" / "trainerType" / "lastProfession"，全落空为 nil；
+-- 只增加返回值，第一个返回值的语义不变，现有调用方按单返回值使用不受影响。
+-- 注意：本函数是纯读取（会被 0.1 秒定时器高频调用），不得在此写存档。
 function Craft.GetCurrentTrainerType()
     local db = type(wjwCraftDB) == "table" and wjwCraftDB or nil
-
-    if db and type(db.trainerType) == "string" and db.trainerType ~= "" then
-        return db.trainerType
-    end
 
     local skillLineID = Craft.GetVisibleProfession()
     if type(skillLineID) == "number" then
         local key = Craft.FindTrainerTypeKey(GetProfessionNameBySkillLineID(skillLineID))
         if key then
-            return key
+            return key, "visible"
         end
     end
 
+    if db and type(db.trainerType) == "string" and db.trainerType ~= "" then
+        return db.trainerType, "trainerType"
+    end
+
     if db and type(db.lastProfession) == "string" and db.lastProfession ~= "" then
-        return Craft.FindTrainerTypeKey(db.lastProfession) or db.lastProfession
+        return Craft.FindTrainerTypeKey(db.lastProfession) or db.lastProfession, "lastProfession"
     end
 
     return nil
