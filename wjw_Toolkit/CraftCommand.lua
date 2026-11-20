@@ -312,15 +312,19 @@ local function GetPlayerWorldPos(mapID)
     return ExtractWorldPos(first, second)
 end
 
+-- 顺时针角度（度，0=北）→ 八方位中文名；DIRECTIONS 按顺时针排列
+local function DegreesToDirection(degrees)
+    local index = math.floor(((degrees + 22.5) % 360) / 45) + 1
+    return DIRECTIONS[index] or "未知"
+end
+
 -- 返回：距离（码）、八方位中文名
 local function DescribeRelative(playerX, playerY, targetX, targetY)
     local dNorth = targetX - playerX   -- X 轴：北为正
     local dWest  = targetY - playerY   -- Y 轴：西为正
     local dEast  = -dWest
     local distance = math.sqrt(dNorth * dNorth + dWest * dWest)
-    local bearing = math.deg(Atan2(dEast, dNorth))
-    local index = math.floor(((bearing + 22.5) % 360) / 45) + 1
-    return distance, (DIRECTIONS[index] or "未知")
+    return distance, DegreesToDirection(math.deg(Atan2(dEast, dNorth)))
 end
 
 local function GetMapName(uiMapID)
@@ -458,6 +462,54 @@ local function GetCurrentProfessionName()
     return nil
 end
 
+-- 当前地图（含父级回退）查不到该类型训练师时的兜底：在同大陆可算出直线距离的训练师中取最近的一个。
+-- 距离与朝向统一走 PathMap.lua 的 QP.GetDistanceToPoint（跨地图换算在其内部完成），
+-- 朝向沿用本文件同一套八方位表：该接口返回的 bearing 为 0=北、逆时针增大，取反成顺时针角度后取档。
+local function ShowNearestElsewhere(candidates, typeName, total)
+    local QP = QuestPath
+    local canMeasure = type(QP) == "table" and type(QP.GetDistanceToPoint) == "function"
+
+    local best, bestDistance, bestBearing
+    if canMeasure then
+        for _, c in ipairs(candidates) do
+            local t = c.trainer
+            local x = tonumber(t.x)
+            local y = tonumber(t.y)
+            -- 训练师坐标是 0–100 制，GetDistanceToPoint 需要 0–1
+            if c.ui and x and y then
+                local ok, distance, bearing = pcall(QP.GetDistanceToPoint, c.ui, x / 100, y / 100)
+                if ok and type(distance) == "number" and type(bearing) == "number" then
+                    if not bestDistance or distance < bestDistance then
+                        best, bestDistance, bestBearing = c, distance, bearing
+                    end
+                end
+            end
+        end
+    end
+
+    local quoted = typeName and ("「" .. typeName .. "」") or ""
+
+    if best then
+        local t = best.trainer
+        Say(string.format("当前地图没有%s训练师。同大陆最近的是：", quoted))
+        Say(string.format("%s · %s · 坐标 (%.2f, %.2f) · 直线距离 %d 码 · %s方向",
+            tostring(t.name),
+            GetMapName(best.ui) or "未知地图",
+            tonumber(t.x) or 0,
+            tonumber(t.y) or 0,
+            math.floor(bestDistance + 0.5),
+            DegreesToDirection(-math.deg(bestBearing))))
+        return
+    end
+
+    Say(string.format("当前地图和所在大陆都没有%s训练师（另有 %d 条在别的大陆）。", quoted, total))
+    if typeName then
+        Say(string.format("用 /wjw craft trainer %s all 查看全部 %d 条。", typeName, total))
+    else
+        Say(string.format("用 /wjw craft trainer all 查看全部 %d 条。", total))
+    end
+end
+
 local function ShowTrainers(args)
     if not db then EnsureDB() end
 
@@ -506,16 +558,12 @@ local function ShowTrainers(args)
             Say("无法获取玩家当前地图。用 /wjw craft trainer all 查看全部训练师。")
             return
         end
-        candidates = FilterByCurrentMap(candidates, currentMap)
-        if #candidates == 0 then
-            if typeName then
-                Say(string.format("当前地图没有查到「%s」训练师。用 /wjw craft trainer %s all 查看全部 %d 条。",
-                    typeName, typeName, total))
-            else
-                Say(string.format("当前地图没有查到训练师。用 /wjw craft trainer all 查看全部 %d 条。", total))
-            end
+        local matched = FilterByCurrentMap(candidates, currentMap)
+        if #matched == 0 then
+            ShowNearestElsewhere(candidates, typeName, total)
             return
         end
+        candidates = matched
     end
 
     local playerX, playerY
