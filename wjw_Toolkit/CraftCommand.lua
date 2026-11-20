@@ -511,6 +511,14 @@ local function ShowNearestElsewhere(candidates, typeName, total)
     end
 end
 
+-- 训练师类型写入存档后立即刷新地图标记，不必等 2 秒定时器
+-- （接口由 CraftTrainerMarker.lua 导出；未加载或刷新失败都不影响命令本身）
+local function RefreshTrainerMarker()
+    if Craft.TrainerMarker and type(Craft.TrainerMarker.Refresh) == "function" then
+        pcall(Craft.TrainerMarker.Refresh)
+    end
+end
+
 local function ShowTrainers(args)
     if not db then EnsureDB() end
 
@@ -564,6 +572,11 @@ local function ShowTrainers(args)
         typeName = ToTrainerTypeKey(typeName)
     end
 
+    -- 无参路径（专业窗口开着 / 关着两个分支）已确定类型，立即刷新地图标记
+    if queryCurrentProfession then
+        RefreshTrainerMarker()
+    end
+
     local candidates = CollectTrainers(typeName)
 
     if #candidates == 0 then
@@ -580,6 +593,8 @@ local function ShowTrainers(args)
         local key = Craft.FindTrainerTypeKey(typeName)
         if key then
             db.trainerType = key
+            -- 显式类型同样写入 wjwCraftDB.trainerType，写完后立即刷新地图标记
+            RefreshTrainerMarker()
         end
     end
 
