@@ -12,8 +12,8 @@
       * 关闭后立即隐藏两处标记并停止定时器，事件回调也不会再显示。
 
     训练师类型来源（统一在 CraftCore.lua 的 Craft.GetCurrentTrainerType 里判定）：
-      ① wjwCraftDB.trainerType（用户显式指定过、且内置数据里有该类型）；
-      ② 专业窗口可见时的专业（Craft.GetVisibleProfession；窗口关着不算）；
+      ① 专业窗口可见时的专业（Craft.GetVisibleProfession；窗口关着不算）；
+      ② wjwCraftDB.trainerType（用户显式指定过、且内置数据里有该类型）；
       ③ wjwCraftDB.lastProfession（CraftCommand.lua 写入的最后一次规划专业名）。
       都取不到、或该类型在 Craft.Trainers 里没有数据时，隐藏标记（不再猜测第一个已学专业）。
 
