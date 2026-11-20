@@ -518,22 +518,43 @@ local function ShowTrainers(args)
     local queryCurrentProfession = false
     local explicitTypeName = false
 
-    -- 无类型名且未加 all：按统一判定链跟随当前类型；识别不到就提示用法，不退化成全部类型
+    -- 无类型名且未加 all：专业窗口开着查当前专业，没开查本职业；识别不到就提示用法，不退化成全部类型
     if not typeName and not showAll then
-        local source
-        typeName, source = GetCurrentProfessionName()
-        if not typeName then
-            Say("未识别当前专业。用法：/wjw craft trainer <专业名>，例如 /wjw craft trainer 工程学")
-            return
+        local visibleProfession
+        if type(Craft.GetVisibleProfession) == "function" then
+            visibleProfession = Craft.GetVisibleProfession()
         end
-        queryCurrentProfession = true
-        -- 来源是当前打开的专业窗口时顺手记住（EnsureDB 已保证 wjwCraftDB 是表）：
-        -- 关掉窗口后标记仍跟随这个专业，不会跳回之前记住的类型
-        if source == "visible" and type(Craft.FindTrainerTypeKey) == "function" then
-            local key = Craft.FindTrainerTypeKey(typeName)
-            if key then
-                db.trainerType = key
+
+        if type(visibleProfession) == "number" then
+            local source
+            typeName, source = GetCurrentProfessionName()
+            if not typeName then
+                Say("未识别当前专业。用法：/wjw craft trainer <专业名>，例如 /wjw craft trainer 工程学")
+                return
             end
+            queryCurrentProfession = true
+            -- 来源是当前打开的专业窗口时顺手记住（EnsureDB 已保证 wjwCraftDB 是表）：
+            -- 关掉窗口后标记仍跟随这个专业，不会跳回之前记住的类型
+            if source == "visible" and type(Craft.FindTrainerTypeKey) == "function" then
+                local key = Craft.FindTrainerTypeKey(typeName)
+                if key then
+                    db.trainerType = key
+                end
+            end
+        else
+            -- 专业窗口没开：查本职业训练师。职业不是专业，不写 db.trainerType，避免污染地图标记的判定
+            local className = UnitClass("player")
+            local key = type(Craft.FindTrainerTypeKey) == "function"
+                and Craft.FindTrainerTypeKey(className)
+                or nil
+            if not key then
+                Say(string.format(
+                    "内置数据里没有「%s」的训练师。数据目前只含战士、圣骑士、猎人、盗贼、牧师、萨满、法师、术士、德鲁伊；可用 /wjw craft trainer <专业名> 查专业训练师。",
+                    tostring(className or "未知职业")))
+                return
+            end
+            typeName = key
+            queryCurrentProfession = true
         end
     elseif typeName then
         -- 显式给出的类型先规范成数据键（如「工程学」→「工程」），与标记层口径一致
@@ -668,7 +689,7 @@ local function ShowHelp()
     Say("  /wjw craft unskip <名称>        从两个跳过名单中移除")
     Say("  /wjw craft list                 查看两个跳过名单")
     Say("  /wjw craft reset                清空跳过名单与目标等级")
-    Say("  /wjw craft trainer [类型] [all]  查询训练师（短写 /wjw c t；默认当前专业最近的一个；类型列当前地图该类型；all 列全部）")
+    Say("  /wjw craft trainer [类型] [all]  查询训练师（短写 /wjw c t；默认最近的一个，专业窗口开着查该专业、没开查本职业；类型列当前地图该类型；all 列全部）")
     Say("  /wjw craft help                 显示本帮助")
     Say("说明：读配方前需先打开过该专业的制作窗口；等级与涨点概率均为估算。")
 end
