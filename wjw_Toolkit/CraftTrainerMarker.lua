@@ -299,10 +299,117 @@ local function ConfigureMarkerTexture(texture, size, subLevel, red, green, blue,
     return true, usedAtlas == true, atlasName
 end
 
+---------------------------------------------------------------- 标记悬停提示
+-- 标记本身是贴图，收不到鼠标事件：另建一个同尺寸的透明框体盖在标记上接收悬停。
+-- 提示内容在刷新时算好存到 frame.info，鼠标事件里只读缓存，不现算距离。
+
+-- 地图名：C_Map.GetMapInfo(mapID).name，取不到用「未知地图」
+local function GetMapName(mapID)
+    if type(C_Map) == "table" and type(C_Map.GetMapInfo) == "function"
+        and type(mapID) == "number" then
+        local ok, info = pcall(C_Map.GetMapInfo, mapID)
+        if ok and type(info) == "table"
+            and type(info.name) == "string" and info.name ~= "" then
+            return info.name
+        end
+    end
+    return "未知地图"
+end
+
+-- 训练师坐标是 0–100 制，直接显示两位小数；
+-- nearest.x / nearest.y 是 0–1 归一化坐标，不能拿来显示。
+local function BuildMarkerInfo(nearest)
+    if type(nearest) ~= "table" or type(nearest.trainer) ~= "table" then
+        return nil
+    end
+    local trainer = nearest.trainer
+    local typeName = type(nearest.typeName) == "string" and nearest.typeName ~= ""
+        and nearest.typeName or "?"
+    return {
+        name = type(trainer.name) == "string" and trainer.name ~= "" and trainer.name or "?",
+        typeName = typeName,
+        mapName = GetMapName(nearest.mapID),
+        x = type(trainer.x) == "number" and trainer.x or 0,
+        y = type(trainer.y) == "number" and trainer.y or 0,
+    }
+end
+
+-- 仅当提示正由该标记显示时才收起，避免误关别人的 tooltip
+local function HideMarkerTooltip(frame)
+    if not frame then
+        return
+    end
+    if not GameTooltip or type(GameTooltip.GetOwner) ~= "function"
+        or type(GameTooltip.Hide) ~= "function" then
+        return
+    end
+    local ok, owner = pcall(GameTooltip.GetOwner, GameTooltip)
+    if ok and owner == frame then
+        pcall(GameTooltip.Hide, GameTooltip)
+    end
+end
+
+local function MarkerTooltip_OnEnter(self)
+    local info = self and self.info
+    if type(info) ~= "table" then
+        return
+    end
+    if not GameTooltip or type(GameTooltip.SetOwner) ~= "function" then
+        return
+    end
+    local ok = pcall(function()
+        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+        GameTooltip:AddLine(tostring(info.name))
+        GameTooltip:AddLine(tostring(info.typeName) .. "训练师", 1, 1, 1)
+        GameTooltip:AddLine(
+            string.format("%s · 坐标 (%.2f, %.2f)", tostring(info.mapName), info.x, info.y),
+            0.8, 0.8, 0.8)
+        GameTooltip:Show()
+    end)
+    if not ok then
+        pcall(GameTooltip.Hide, GameTooltip)
+    end
+end
+
+local function MarkerTooltip_OnLeave(self)
+    HideMarkerTooltip(self)
+end
+
+-- 透明悬停感应框：尺寸与标记贴图一致，父级由调用方决定（小地图 / 世界地图画布）
+local function CreateMarkerHover(parent, size)
+    if not parent then
+        return nil
+    end
+    local okFrame, frame = pcall(CreateFrame, "Frame", nil, parent)
+    if not okFrame or not frame then
+        return nil
+    end
+    local okSetup = pcall(function()
+        frame:SetSize(size, size)
+        frame:EnableMouse(true)
+        -- 只借悬停事件：点击/拖动向下穿透，不挡住小地图点击与世界地图拖动
+        if type(frame.SetPropagateMouseClicks) == "function" then
+            frame:SetPropagateMouseClicks(true)
+        end
+        if type(frame.SetPropagateMouseMotion) == "function" then
+            frame:SetPropagateMouseMotion(true)
+        end
+        frame:SetScript("OnEnter", MarkerTooltip_OnEnter)
+        frame:SetScript("OnLeave", MarkerTooltip_OnLeave)
+        frame:Hide()
+    end)
+    if not okSetup then
+        pcall(frame.Hide, frame)
+        return nil
+    end
+    return frame
+end
+
 ---------------------------------------------------------------- 小地图标记
 local minimapBorder
 local minimapFill
 local minimapUsesAtlas
+local minimapHover        -- 悬停感应框（透明，只负责接收鼠标悬停）
 local minimapNearest     -- 最近一次 FindNearest() 的结果，供小地图高频刷新复用
 
 local function EnsureMinimapMarkers()
@@ -330,6 +437,9 @@ local function EnsureMinimapMarkers()
         return nil
     end
     minimapBorder, minimapFill, minimapUsesAtlas = border, fill, usedAtlas == true
+    -- 悬停感应框：尺寸跟随最终实际使用的标记样式（图集 18 / 纯色托底 14）
+    minimapHover = CreateMarkerHover(Minimap,
+        minimapUsesAtlas and ATLAS_MARKER_SIZE or MARKER_BORDER_SIZE)
     if minimapUsesAtlas then
         DebugPrint("marker atlas: " .. tostring(atlasName))
     else
@@ -344,6 +454,10 @@ local function HideMinimapMarkers()
     end
     if minimapFill then
         pcall(minimapFill.Hide, minimapFill)
+    end
+    if minimapHover then
+        HideMarkerTooltip(minimapHover)
+        pcall(minimapHover.Hide, minimapHover)
     end
 end
 
@@ -429,6 +543,20 @@ local function UpdateMinimapMarker(nearest)
     end)
     if not okPoint then
         HideMinimapMarkers()
+        return
+    end
+
+    -- 感应框与标记同位置同步显隐，供鼠标悬停弹提示
+    if minimapHover then
+        local okHover = pcall(function()
+            minimapHover.info = BuildMarkerInfo(nearest)
+            minimapHover:ClearAllPoints()
+            minimapHover:SetPoint("CENTER", Minimap, "CENTER", offsetX, offsetY)
+            minimapHover:Show()
+        end)
+        if not okHover then
+            pcall(minimapHover.Hide, minimapHover)
+        end
     end
 end
 
@@ -449,6 +577,7 @@ local worldFill
 local worldParent        -- 贴图当前父级：正常情况就是 WorldMapFrame 的 canvas
 local worldContainer     -- 兜底：画布不能直接挂贴图时才创建的中转框体
 local worldUsesAtlas
+local worldHover         -- 悬停感应框（透明，只负责接收鼠标悬停）
 
 -- 最近一次成功绘制的位置；刷新偶发失败时保留它，避免标记闪一下就没
 local lastWorldDraw      -- { mapX = , mapY = , mapID = }
@@ -464,6 +593,10 @@ local function HideWorldMarkers()
     if worldFill then
         pcall(worldFill.Hide, worldFill)
     end
+    if worldHover then
+        HideMarkerTooltip(worldHover)
+        pcall(worldHover.Hide, worldHover)
+    end
 end
 
 local function DestroyWorldMarkers()
@@ -472,6 +605,7 @@ local function DestroyWorldMarkers()
         pcall(worldContainer.Hide, worldContainer)
     end
     worldBorder, worldFill, worldParent, worldContainer, worldUsesAtlas = nil, nil, nil, nil, nil
+    worldHover = nil
 end
 
 local worldRetryCount = 0
@@ -627,6 +761,15 @@ local function EnsureWorldMarkers()
 
     worldBorder, worldFill, worldParent = border, fill, parent
     worldUsesAtlas = usedAtlas == true
+    -- 悬停感应框：与标记同尺寸，父级与贴图一致；画布重建时随标记一起重建
+    worldHover = CreateMarkerHover(parent,
+        worldUsesAtlas and WORLD_ATLAS_MARKER_SIZE or WORLD_MARKER_BORDER_SIZE)
+    if worldHover then
+        -- 略高于画布，保证能收到悬停；点击/拖动已设为向下穿透，不影响地图拖动
+        pcall(function()
+            worldHover:SetFrameLevel(parent:GetFrameLevel() + 10)
+        end)
+    end
     if worldUsesAtlas then
         DebugPrint("world marker atlas: " .. tostring(atlasName))
     else
@@ -745,6 +888,19 @@ local function UpdateWorldMarker(nearest)
         ResetWorldRetry()
         FailWorldDraw("world: SetPoint failed", displayMapID)
         return
+    end
+
+    -- 感应框与标记同位置（画布局部坐标）同步显隐，供鼠标悬停弹提示
+    if worldHover then
+        local okHover = pcall(function()
+            worldHover.info = BuildMarkerInfo(nearest)
+            worldHover:ClearAllPoints()
+            worldHover:SetPoint("CENTER", parent, "TOPLEFT", offsetX, offsetY)
+            worldHover:Show()
+        end)
+        if not okHover then
+            pcall(worldHover.Hide, worldHover)
+        end
     end
 
     -- 画成功才更新缓存与失败计数
