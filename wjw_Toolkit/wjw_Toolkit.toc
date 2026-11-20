@@ -3,7 +3,7 @@
 ## Notes: 任务寻路 + 自动卖垃圾 + 专业技能升级规划。命令统一入口：/wjw
 ## Author: wjw
 ## Version: 1.4.0
-## SavedVariables: QuestPathDB, WuXianAutoSellDB, wjwCraftDB
+## SavedVariables: QuestPathDB, WuXianAutoSellDB, wjwCraftDB, wjwItemDB
 
 PathCore.lua
 PathMap.lua

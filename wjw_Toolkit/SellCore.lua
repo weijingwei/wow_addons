@@ -610,16 +610,127 @@ SlashCmdList["WJW"] = function(msg)
     end
 end
 
+---------------------------------------------------------------- 银行数量快照（按角色隔离）
+-- 银行没打开过时，客户端的银行数据可能尚未加载，C_Item.GetItemCount 的
+-- 银行部分会偏小甚至为 0（TSM 更新日志有同类记录）。因此每次打开银行时
+-- 扫描一次，把物品数量写进存档 wjwItemDB，按「服务器|角色」分开存；
+-- 本次会话没扫过时，提示框改用该角色上次记录的数量并标注「上次记录」。
+local bankScannedThisSession = false
+
+local function BankCharacterKey()
+    local okName, name = pcall(UnitName, "player")
+    local okRealm, realm = pcall(GetRealmName)
+    if not okName or type(name) ~= "string" or name == "" then name = "unknown" end
+    if not okRealm or type(realm) ~= "string" or realm == "" then realm = "unknown" end
+    return realm .. "|" .. name
+end
+
+local function EnsureItemDB()
+    if type(wjwItemDB) ~= "table" then wjwItemDB = {} end
+    if type(wjwItemDB.characters) ~= "table" then wjwItemDB.characters = {} end
+    return wjwItemDB
+end
+
+local function GetBankRecord(create)
+    if type(wjwItemDB) ~= "table" then
+        if not create then return nil end
+        wjwItemDB = {}
+    end
+    if type(wjwItemDB.characters) ~= "table" then
+        if not create then return nil end
+        wjwItemDB.characters = {}
+    end
+    local key = BankCharacterKey()
+    local record = wjwItemDB.characters[key]
+    if type(record) == "table" then return record end
+    if not create then return nil end
+    record = {}
+    wjwItemDB.characters[key] = record
+    return record
+end
+
+-- 收集个人银行的容器 ID：
+-- 当前客户端（银行标签系统）优先用 C_Bank 给出的已购买标签容器；
+-- 取不到时退回经典式 BANK_CONTAINER + BankBag_* + Reagentbank。
+-- 战团银行（AccountBankTab_* / Accountbanktab）不在统计范围内。
+local function PersonalBankBagIDs()
+    local ids, seen = {}, {}
+    local function add(id)
+        if type(id) == "number" and not seen[id] then
+            seen[id] = true
+            ids[#ids + 1] = id
+        end
+    end
+
+    if type(C_Bank) == "table"
+        and type(C_Bank.FetchPurchasedBankTabIDs) == "function"
+        and type(Enum) == "table"
+        and type(Enum.BankType) == "table"
+        and Enum.BankType.Character ~= nil then
+        local ok, list = pcall(C_Bank.FetchPurchasedBankTabIDs, Enum.BankType.Character)
+        if ok and type(list) == "table" then
+            for _, id in pairs(list) do add(id) end
+        end
+    end
+    if #ids > 0 then return ids end
+
+    local bi = type(Enum) == "table" and Enum.BagIndex or nil
+    if type(bi) ~= "table" then return ids end
+    if bi.CharacterBankTab_1 then
+        for i = 1, 9 do add(bi["CharacterBankTab_" .. i]) end
+    else
+        add(bi.Bank)
+        for i = 1, 7 do add(bi["BankBag_" .. i]) end
+        add(bi.Reagentbank)
+    end
+    return ids
+end
+
+-- 扫描银行并整份替换该角色快照；任何一步失败都不影响游戏。
+local function ScanBankSnapshot()
+    local bags = PersonalBankBagIDs()
+    if #bags == 0 then return false end
+
+    local counts = {}
+    local scannedAny = false
+    for _, bagID in ipairs(bags) do
+        local okSlots, slots = pcall(Container.NumSlots, bagID)
+        slots = okSlots and tonumber(slots) or 0
+        if slots > 0 then
+            scannedAny = true
+            for slot = 1, slots do
+                local okInfo, info = pcall(Container.ItemInfo, bagID, slot)
+                if okInfo and info then
+                    local itemID = tonumber(info.itemID)
+                    local count = tonumber(info.count) or 1
+                    if itemID and itemID > 0 and count > 0 then
+                        counts[itemID] = (counts[itemID] or 0) + count
+                    end
+                end
+            end
+        end
+    end
+    if not scannedAny then return false end
+
+    local record = GetBankRecord(true)
+    record.bank = counts   -- 整份替换：上次有、本次没有的物品不会残留旧数量
+    record.time = time()
+    return true
+end
+
 ---------------------------------------------------------------- 事件
 local eventFrame = CreateFrame("Frame")
 eventFrame:RegisterEvent("ADDON_LOADED")
 eventFrame:RegisterEvent("MERCHANT_SHOW")
 eventFrame:RegisterEvent("MERCHANT_CLOSED")
+eventFrame:RegisterEvent("BANKFRAME_OPENED")
+eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
 
-eventFrame:SetScript("OnEvent", function(self, event, arg1)
+eventFrame:SetScript("OnEvent", function(self, event, arg1, arg2)
     if event == "ADDON_LOADED" then
         if arg1 ~= ADDON_NAME then return end
         EnsureDB()
+        EnsureItemDB()
         if NS.InitOptions then NS.InitOptions() end
         Print(string.format("v%s 已加载，自动卖出当前%s。输入 /wjw 查看用法。",
             NS.VERSION, db.enabled and "开启" or "关闭"))
@@ -639,6 +750,18 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1)
     elseif event == "MERCHANT_CLOSED" then
         if session.active then
             StopSession("closed")
+        end
+    elseif event == "BANKFRAME_OPENED" then
+        local ok, scanned = pcall(ScanBankSnapshot)
+        if ok and scanned then
+            bankScannedThisSession = true
+        end
+    elseif event == "PLAYER_ENTERING_WORLD" then
+        -- 登录 / 重载界面 / 换角色时重置「本次会话已扫过银行」标记。
+        -- 区域切换也会触发本事件（此时 arg1、arg2 均为 false），不重置，
+        -- 避免同一次登录里去过银行之后又退回显示「上次记录」。
+        if arg1 or arg2 then
+            bankScannedThisSession = false
         end
     end
 end)
@@ -701,8 +824,21 @@ local function OnItemTooltipPostCall(tooltip, data)
     if not bag then
         return
     end
+    local bankText
+    if bankScannedThisSession then
+        -- 本次会话已打开过银行：客户端的实时数据是准的，直接用
+        bankText = string.format("银行：%d", bank)
+    else
+        local record = GetBankRecord(false)
+        if record and type(record.bank) == "table" then
+            bankText = string.format("银行：%d（上次记录）", tonumber(record.bank[itemID]) or 0)
+        else
+            -- 该角色从未记录过银行，没有可用快照
+            bankText = "银行：0"
+        end
+    end
     tooltip:AddLine(string.format("背包：%d", bag), 0.9, 0.9, 0.9)
-    tooltip:AddLine(string.format("银行：%d", bank), 0.6, 0.8, 1.0)
+    tooltip:AddLine(bankText, 0.6, 0.8, 1.0)
 end
 
 local function InstallItemTooltipCount()
