@@ -260,8 +260,6 @@ local function StopSession(reason)
     elseif reason == "done" or reason == "closed" then
         if session.skipped then
             Print("没有可出售的灰色物品（部分灰色物品商人不收购，已跳过）。")
-        else
-            Print("背包里没有可出售的灰色物品。")
         end
     end
 
