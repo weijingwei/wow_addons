@@ -642,3 +642,78 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1)
         end
     end
 end)
+
+---------------------------------------------------------------- 物品提示：背包 / 银行数量
+-- 鼠标悬停物品（背包、银行、商人、拍卖行、聊天链接等）时，
+-- 在提示框末尾追加「背包：N」「银行：M」两行。
+-- 物品 ID 优先取 TooltipDataProcessor 回调的 data.id，
+-- 取不到时回退到 tooltip:GetItem() 的第三个返回值 / 物品链接解析。
+-- 整段用 pcall 包裹，异常只影响本次提示框，不影响其它物品。
+local function CountItemBagAndBank(itemID)
+    if type(C_Item) ~= "table" or type(C_Item.GetItemCount) ~= "function" then
+        return nil, nil
+    end
+    -- 参数：itemID, includeBank, includeUses, includeReagentBank, includeAccountBank
+    local okBag, bag = pcall(C_Item.GetItemCount, itemID, false, false, false, false)
+    local okAll, all = pcall(C_Item.GetItemCount, itemID, true, false, true, false)
+    if not okBag or type(bag) ~= "number" or not okAll or type(all) ~= "number" then
+        return nil, nil
+    end
+    if all < bag then all = bag end
+    return bag, all - bag
+end
+
+local function GetTooltipItemID(tooltip, data)
+    if data then
+        local ok, id = pcall(function()
+            local v = data.id
+            if type(v) == "number" and v > 0 then return v end
+        end)
+        if ok and id then return id end
+    end
+    if tooltip and type(tooltip.GetItem) == "function" then
+        local ok, id = pcall(function()
+            local _, link, fromTooltip = tooltip:GetItem()
+            if type(fromTooltip) == "number" and fromTooltip > 0 then
+                return fromTooltip
+            end
+            if type(link) == "string" then
+                local fromLink = tonumber(link:match("item:(%d+)"))
+                if fromLink and fromLink > 0 then
+                    return fromLink
+                end
+            end
+        end)
+        if ok and id then return id end
+    end
+    return nil
+end
+
+local function OnItemTooltipPostCall(tooltip, data)
+    if not tooltip or type(tooltip.AddLine) ~= "function" then
+        return
+    end
+    local itemID = GetTooltipItemID(tooltip, data)
+    if not itemID then
+        return
+    end
+    local bag, bank = CountItemBagAndBank(itemID)
+    if not bag then
+        return
+    end
+    tooltip:AddLine(string.format("背包：%d", bag), 0.9, 0.9, 0.9)
+    tooltip:AddLine(string.format("银行：%d", bank), 0.6, 0.8, 1.0)
+end
+
+local function InstallItemTooltipCount()
+    if type(TooltipDataProcessor) ~= "table" then return end
+    if type(TooltipDataProcessor.AddTooltipPostCall) ~= "function" then return end
+    if type(Enum) ~= "table" or type(Enum.TooltipDataType) ~= "table" then return end
+    local itemType = Enum.TooltipDataType.Item
+    if itemType == nil then return end
+    pcall(TooltipDataProcessor.AddTooltipPostCall, itemType, function(tooltip, data)
+        pcall(OnItemTooltipPostCall, tooltip, data)
+    end)
+end
+
+InstallItemTooltipCount()
